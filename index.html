@@ -116,7 +116,7 @@
 <div id="login-overlay">
   <div class="login-card">
     <h2>今鶴安平・外場崗位評分系統</h2>
-    <div class="sub">請手動輸入你的姓名並輸入密碼，夥伴的預設密碼是 <b>0800</b>，登入後可自行修改密碼（純數字四位數）。</div>
+    <div class="sub">請手動輸入你的姓名並輸入密碼，夥伴的預設密碼是 <b>0800</b>，登入後可自行修改密碼（純數字四位數）。登入需要連線核對密碼，請確保有網路連線；第一次用這台裝置的話，請先展開下方「新裝置」設定同步網址。</div>
     <div class="field">
       <label>姓名</label>
       <input type="text" id="login-name-input">
@@ -130,6 +130,14 @@
       <button class="primary" onclick="doLogin()">登入</button>
     </div>
     <div class="sub" style="margin-top:10px;">忘記密碼請洽管理員重設回預設密碼。</div>
+    <details style="margin-top:14px;">
+      <summary style="cursor:pointer;color:var(--accent-dark);font-size:12.5px;font-weight:600;">這是新裝置，還沒設定同步網址？</summary>
+      <div style="margin-top:8px;">
+        <input type="text" id="login-sync-url-input" placeholder="貼上管理員提供的同步網址" style="width:100%;margin-bottom:6px;box-sizing:border-box;">
+        <button type="button" class="ghost" style="width:100%;" onclick="saveLoginSyncUrl()">儲存網址</button>
+        <div class="msg" id="login-sync-msg" style="margin-top:6px;"></div>
+      </div>
+    </details>
   </div>
 </div>
 
@@ -504,7 +512,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-21-6";
+const APP_VERSION = "2026-07-21-8";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -700,7 +708,39 @@ function resolveLoginName(){
   return document.getElementById("login-name-input").value.trim();
 }
 
-function doLogin(){
+// 登入一律連線雲端核對密碼，不相信裝置本機快取／預設植入的密碼；
+// 避免有人拿著別人裝置上「還沒同步到最新密碼」的舊快取（或預設0800）登入別人的帳號、冒名送出評分或投票。
+// 唯一例外：雲端從來沒收到過這個人的密碼（全新系統、或這個人剛被新增還沒改過密碼），這時沒有東西可以核對，才退回本機比對，避免永久卡住登入不了。
+async function verifyPinAgainstCloud(name, pin){
+  const url = loadSyncUrl();
+  if(!url) return {ok:false, reason:"nourl"};
+  try{
+    const res = await fetch(url + (url.includes("?") ? "&" : "?") + "mode=pins");
+    const json = await res.json();
+    if(!json || !json.ok || !json.data) return {ok:false, reason:"fetchfail"};
+    const cloudHash = json.data[name];
+    if(!cloudHash) return {ok:false, reason:"nocloudrecord"};
+    const hash = simpleHash(name + ":" + pin);
+    if(cloudHash !== hash) return {ok:false, reason:"mismatch"};
+    // 核對成功，順便把本機快取更新成雲端這一份，其他地方（例如之後離線時）也能用最新的。
+    const pins = loadPins();
+    pins[name] = cloudHash;
+    savePins(pins);
+    return {ok:true};
+  }catch(err){
+    return {ok:false, reason:"neterror"};
+  }
+}
+
+function saveLoginSyncUrl(){
+  const input = document.getElementById("login-sync-url-input");
+  const url = input.value.trim();
+  if(!url){ showMsg("login-sync-msg","warn","請輸入同步網址"); return; }
+  saveSyncUrl(url);
+  showMsg("login-sync-msg","ok","已儲存，現在可以正常登入了。");
+}
+
+async function doLogin(){
   const name = resolveLoginName();
   const pin = document.getElementById("login-pin").value.trim();
   const msgEl = document.getElementById("login-msg");
@@ -712,22 +752,34 @@ function doLogin(){
   }
   if(!pin){ msgEl.className="msg warn"; msgEl.textContent="請輸入密碼"; return; }
 
-  const pins = loadPins();
-  const hash = simpleHash(name + ":" + pin);
-
-  if(pins[name]){
-    if(pins[name] !== hash){
+  msgEl.className="msg"; msgEl.style.display="block"; msgEl.textContent="核對中…";
+  const result = await verifyPinAgainstCloud(name, pin);
+  if(result.ok){
+    currentUser = name;
+    localStorage.setItem(SESSION_KEY, name);
+    enterApp();
+    return;
+  }
+  if(result.reason === "nourl" || result.reason === "fetchfail" || result.reason === "neterror"){
+    msgEl.className="msg warn";
+    msgEl.textContent = "登入需要連線雲端核對密碼，請確認這台裝置已設定同步網址（展開下方「新裝置」設定）、且有網路連線後再試一次。";
+    return;
+  }
+  if(result.reason === "nocloudrecord"){
+    // 雲端從沒收過這個人的密碼：退回原本的本機比對邏輯（僅限這個情況，避免全新系統/新夥伴永遠無法登入）。
+    const pins = loadPins();
+    const hash = simpleHash(name + ":" + pin);
+    if(pins[name] && pins[name] !== hash){
       msgEl.className="msg warn"; msgEl.textContent="密碼錯誤，請再試一次；忘記密碼請洽管理員重設回預設密碼。";
       return;
     }
-  } else {
-    pins[name] = hash;
-    savePins(pins);
+    if(!pins[name]){ pins[name] = hash; savePins(pins); }
+    currentUser = name;
+    localStorage.setItem(SESSION_KEY, name);
+    enterApp();
+    return;
   }
-
-  currentUser = name;
-  localStorage.setItem(SESSION_KEY, name);
-  enterApp();
+  msgEl.className="msg warn"; msgEl.textContent="密碼錯誤，請再試一次；忘記密碼請洽管理員重設回預設密碼。";
 }
 
 function doLogout(){
