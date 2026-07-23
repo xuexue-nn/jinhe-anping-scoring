@@ -107,7 +107,7 @@
 
 <!-- ================= 版本不同步提醒 ================= -->
 <div id="version-banner">
-  <span>系統偵測到你這台裝置的版本比較舊，請重新整理頁面更新（如果重新整理後還是這個訊息，代表你開啟的不是管理員提供的最新網址，請跟管理員確認）。</span>
+  <span id="version-banner-text">系統偵測到你這台裝置的版本比較舊，請重新整理頁面更新（如果重新整理後還是這個訊息，代表你開啟的不是管理員提供的最新網址，請跟管理員確認）。</span>
   <button onclick="location.reload()">重新整理</button>
   <button class="link2" onclick="hideVersionBanner()">先關閉</button>
 </div>
@@ -512,7 +512,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-21-8";
+const APP_VERSION = "2026-07-21-9";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -1197,8 +1197,16 @@ async function pullSettingsFromCloud(silent){
 let versionBannerDismissed = false;
 function checkVersionMismatch(cloudVersion){
   const banner = document.getElementById("version-banner");
+  const textEl = document.getElementById("version-banner-text");
   if(!banner) return;
   if(cloudVersion && cloudVersion !== APP_VERSION && !versionBannerDismissed){
+    // 管理員自己的裝置版本不同，很可能是「這台裝置手上是更新的檔案，還沒同步到雲端」，
+    // 跟一般夥伴「裝置版本比雲端舊」的情況方向相反，訊息跟建議動作要分開講，避免誤導。
+    if(textEl){
+      textEl.textContent = isAdmin()
+        ? "系統偵測到這台裝置的版本跟雲端上記錄的不一樣（常見原因：你剛拿到新檔案，但還沒去「評分總覽→設定同步」按「同步到雲端」）。如果你確定手上是最新檔案，請去那邊按一次同步；不確定的話，也可以先重新整理頁面確認。"
+        : "系統偵測到你這台裝置的版本比較舊，請重新整理頁面更新（如果重新整理後還是這個訊息，代表你開啟的不是管理員提供的最新網址，請跟管理員確認）。";
+    }
     banner.classList.add("show");
   } else if(!cloudVersion || cloudVersion === APP_VERSION){
     banner.classList.remove("show");
