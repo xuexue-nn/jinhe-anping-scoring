@@ -429,7 +429,7 @@
   <div class="tab" id="tab-election">
     <div class="card">
       <h2>考官投票</h2>
-      <p class="helptext">每季針對各崗位投票選出考官。第一名 3 分、第二名 2 分、第三名 1 分，加總後由高到低排名。<span id="election-winner-note"></span> 每人每季、每崗位只能投一次票，重新送出會覆蓋你上一次的投票。</p>
+      <p class="helptext">每季針對各崗位投票選出考官。第一名 3 分、第二名 2 分、第三名 1 分，加總後由高到低排名。<span id="election-winner-note"></span> 每人每季、每崗位只能投一次票，重新送出會覆蓋你上一次的投票。第一/第二/第三名都可以留空（不勉強排名），但已經選的人裡面不能重複選同一個人。</p>
       <div class="row">
         <div class="field">
           <label>選舉季度</label>
@@ -512,7 +512,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-21-9";
+const APP_VERSION = "2026-07-21-11";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -737,7 +737,11 @@ function saveLoginSyncUrl(){
   const url = input.value.trim();
   if(!url){ showMsg("login-sync-msg","warn","請輸入同步網址"); return; }
   saveSyncUrl(url);
-  showMsg("login-sync-msg","ok","已儲存，現在可以正常登入了。");
+  // 登入前開機時的自動同步已經跑過（那時候還沒有網址），這裡補跑一次，
+  // 這樣登入後就不用再手動去「同步管理員的系統設定」按一次，崗位資格/名單等設定就已經是最新的。
+  pullSettingsFromCloud(true);
+  pullPinsFromCloud();
+  showMsg("login-sync-msg","ok","已儲存並同步完成，現在可以正常登入了。");
 }
 
 async function doLogin(){
@@ -1929,20 +1933,20 @@ function saveVote(){
   if(!currentUser){ showMsg("el-msg","warn","請先登入"); return; }
   if(isVoteExempt(currentUser, position)){ showMsg("el-msg","warn",`你不用參與「${position}」崗位的考官投票。`); return; }
   if(!quarter){ showMsg("el-msg","warn","請填寫選舉季度，例如 2026-Q3"); return; }
-  if(!first){ showMsg("el-msg","warn","至少要選出第一名"); return; }
+  // 第一/第二/第三名都可以留空（例如不熟這個崗位、不想勉強排名），但已經選的人裡面不能重複選同一個人。
   const picks = [first, second, third].filter(Boolean);
   if(new Set(picks).size !== picks.length){ showMsg("el-msg","warn","同一個人不能重複選為第一 / 第二 / 第三名"); return; }
   if(!reason){ showMsg("el-msg","warn","請填寫你判斷的依據（必填），公布考官時會一併讓大家看見"); return; }
 
   const votes = loadVotes();
   const record = getOrCreateVoteRecord(votes, quarter, position);
-  record.ballots[currentUser] = {first, second: second || null, third: third || null, reason, ts: Date.now()};
+  record.ballots[currentUser] = {first: first || null, second: second || null, third: third || null, reason, ts: Date.now()};
   saveVotes(votes);
 
   showMsg("el-msg","ok",`已送出 ${currentUser} 對「${position}」崗位（${quarter}）的投票。`);
   renderVoteResults();
   renderQuarterSummary();
-  pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first, second: second || null, third: third || null, reason});
+  pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason});
 }
 
 function renderVoteResults(){
@@ -2030,16 +2034,16 @@ function exportVote(){
   const second = document.getElementById("vote-second").value;
   const third = document.getElementById("vote-third").value;
   const reason = document.getElementById("vote-reason").value.trim();
-  if(!quarter || !first){ alert("請先完整投票（至少選第一名）再匯出"); return; }
+  if(!quarter){ alert("請先填寫選舉季度再匯出"); return; }
   if(!reason){ alert("請先填寫判斷依據（必填）再匯出"); return; }
-  const payload = {type:"vote", quarter, position, voter: currentUser, first, second: second || null, third: third || null, reason};
+  const payload = {type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason};
   download(`考官投票_${currentUser}_${position}_${quarter}.json`, JSON.stringify(payload, null, 2));
 }
 
 function applyVoteImported(votes, obj){
-  if(!obj || !obj.quarter || !obj.position || !obj.voter || !obj.first) return;
+  if(!obj || !obj.quarter || !obj.position || !obj.voter) return;
   const record = getOrCreateVoteRecord(votes, obj.quarter, obj.position);
-  record.ballots[obj.voter] = {first: obj.first, second: obj.second || null, third: obj.third || null, reason: obj.reason || "", ts: Date.now()};
+  record.ballots[obj.voter] = {first: obj.first || null, second: obj.second || null, third: obj.third || null, reason: obj.reason || "", ts: Date.now()};
 }
 
 function exportAllVotesJSON(){
