@@ -101,6 +101,13 @@
   #version-banner.show{display:flex;}
   #version-banner button{background:#fff;color:var(--b);border:none;padding:6px 14px;border-radius:6px;font-size:12.5px;font-weight:700;cursor:pointer;}
   #version-banner button.link2{background:none;color:#fff;text-decoration:underline;padding:0;font-weight:400;}
+
+  /* ---- 截止時間醒目橫幅 ---- */
+  .deadline-banner{display:none;padding:10px 14px;border-radius:8px;font-size:13px;font-weight:700;margin:2px 0 12px;line-height:1.6;border:1px solid transparent;}
+  .deadline-banner.show{display:block;}
+  .deadline-banner.info{background:var(--abg);color:var(--accent-dark);border-color:var(--accent);}
+  .deadline-banner.urgent{background:var(--bbg);color:var(--b);border-color:var(--b);}
+  .deadline-banner.locked{background:var(--cbg);color:var(--c);border-color:var(--c);}
 </style>
 </head>
 <body>
@@ -189,10 +196,14 @@
 
   <!-- ================= 考官評分 ================= -->
   <div class="tab active" id="tab-examiner">
-    <div class="card">
+    <div class="card" id="ex-no-duty-msg" style="display:none;">
+      <h2>考官評分表</h2>
+      <p class="helptext">你目前不是任何崗位的考官，這個月不用填寫考官評分。</p>
+    </div>
+    <div class="card" id="ex-form-card">
       <h2>考官評分表</h2>
       <p class="helptext">考官身份已鎖定為你登入的姓名，不能替其他人填寫，也不能評自己。若該崗位本季已由管理員公布考官選舉結果，只有當選的考官才能送出評分；若還沒公布考官選舉結果，暫時無法送出考官評分。</p>
-      <p class="helptext" id="ex-deadline-status"></p>
+      <div class="deadline-banner" id="ex-deadline-status"></div>
       <div class="row">
         <div class="field">
           <label>考核期間</label>
@@ -284,7 +295,7 @@
     <div class="card">
       <h2>個人自評表</h2>
       <p class="helptext">「我是」已鎖定為你登入的姓名，不能替其他夥伴填寫自評。</p>
-      <p class="helptext" id="sf-deadline-status"></p>
+      <div class="deadline-banner" id="sf-deadline-status"></div>
       <div class="row">
         <div class="field">
           <label>考核期間</label>
@@ -560,7 +571,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-21-15";
+const APP_VERSION = "2026-07-26-16";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -887,6 +898,7 @@ function enterApp(){
   document.getElementById("ex-name-display").textContent = currentUser;
   document.getElementById("sf-name-display").textContent = currentUser;
   document.getElementById("el-voter-display").textContent = currentUser;
+  renderExPositionOptions();
   renderExStaffButtons();
   renderAdminPanel();
   renderQuarterOverridePanel();
@@ -1182,19 +1194,25 @@ function formatCountdown(ms){
 // 在指定的 elId（一段 helptext）顯示截止時間跟倒數，或是「已截止」的提示；沒設定截止時間就不顯示任何東西。
 // 重點：如果這個人被管理員個別重新開放了，畫面上完全不提「重新開放」這件事、什麼提示都不顯示，
 // 跟「這個月本來就沒設截止時間」看起來一模一樣，夥伴沒有辦法分辨兩種情況，管理員這個權限才不會被發現。
+const DEADLINE_URGENT_MS = 24 * 60 * 60 * 1000; // 剩不到24小時，橫幅改用更醒目的緊急樣式
+
 function renderDeadlineStatus(period, type, elId, name){
   const el = document.getElementById(elId);
   if(!el) return;
   const deadline = getDeadline(period, type);
-  if(!deadline){ el.textContent = ""; return; }
+  if(!deadline){ el.className = "deadline-banner"; el.textContent = ""; return; }
   const diff = deadline.getTime() - Date.now();
   const label = type === "examiner" ? "考官評分" : "個人自評";
   if(diff > 0){
-    el.textContent = `本月「${label}」截止時間：${deadline.toLocaleString("zh-TW")}（倒數 ${formatCountdown(diff)}）`;
+    const urgent = diff <= DEADLINE_URGENT_MS;
+    el.className = "deadline-banner show " + (urgent ? "urgent" : "info");
+    el.textContent = `${urgent ? "⚠ " : "⏰ "}本月「${label}」截止時間：${deadline.toLocaleString("zh-TW")}（倒數 ${formatCountdown(diff)}）`;
   } else if(name && isReopenedFor(period, type, name)){
+    el.className = "deadline-banner";
     el.textContent = "";
   } else {
-    el.textContent = `本月「${label}」已於 ${deadline.toLocaleString("zh-TW")} 截止，無法再送出，如需協助請洽管理員。`;
+    el.className = "deadline-banner show locked";
+    el.textContent = `🔒 本月「${label}」已於 ${deadline.toLocaleString("zh-TW")} 截止，無法再送出，如需協助請洽管理員。`;
   }
 }
 
@@ -1305,6 +1323,8 @@ function exportSettingsJSON(){
     electionQuarterBind: loadElectionQuarterBind(),
     submitDeadline: loadSubmitDeadlines(),
     submitReopen: loadSubmitReopens(),
+    publish: loadPublish(),
+    scorePublish: loadScorePublish(),
     appVersion: APP_VERSION,
     ts: Date.now()
   };
@@ -1332,7 +1352,10 @@ function importSettingsFile(){
       if(obj.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(obj.electionQuarterBind));
       if(obj.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(obj.submitDeadline));
       if(obj.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(obj.submitReopen));
+      if(obj.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(obj.publish));
+      if(obj.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(obj.scorePublish));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
+      renderExPositionOptions();
       renderExStaffButtons();
       renderVoteGate();
       applyBoundQuarter();
@@ -1370,6 +1393,9 @@ function applyCloudSettings(data){
   if(data.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(data.electionQuarterBind));
   if(data.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(data.submitDeadline));
   if(data.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(data.submitReopen));
+  if(data.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(data.publish));
+  if(data.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(data.scorePublish));
+  renderExPositionOptions();
   renderExStaffButtons();
   renderVoteGate();
   applyBoundQuarter();
@@ -1509,6 +1535,8 @@ async function pushSettingsToCloud(){
     electionQuarterBind: loadElectionQuarterBind(),
     submitDeadline: loadSubmitDeadlines(),
     submitReopen: loadSubmitReopens(),
+    publish: loadPublish(),
+    scorePublish: loadScorePublish(),
     appVersion: APP_VERSION
   };
   statusEl.textContent = "同步中…";
@@ -1759,15 +1787,15 @@ function fillSelect(el, arr){
 }
 
 function initCommon(){
-  fillSelect(document.getElementById("ex-position"), POSITIONS);
-  fillSelect(document.getElementById("sf-position"), POSITIONS);
   document.getElementById("ex-period").value = currentMonth();
   document.getElementById("sf-period").value = currentMonth();
+  renderExPositionOptions();
+  fillSelect(document.getElementById("sf-position"), POSITIONS);
   buildItemFields(document.getElementById("ex-items"), "ex");
   buildItemFields(document.getElementById("sf-items"), "sf");
 
   document.getElementById("ex-position").addEventListener("change", renderExStaffButtons);
-  document.getElementById("ex-period").addEventListener("change", ()=>{ renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); });
+  document.getElementById("ex-period").addEventListener("change", ()=>{ renderExPositionOptions(); renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); });
   document.getElementById("sf-position").addEventListener("change", checkSelfEligibility);
   document.getElementById("sf-period").addEventListener("change", checkSelfEligibility);
 
@@ -1818,6 +1846,39 @@ function clearBlockMsg(id){
   document.getElementById(id).style.display = "none";
 }
 
+// 已公布的崗位如果我沒當選，就從下拉選單直接拿掉，不用讓夥伴自己一個個試才發現不能填；
+// 還沒公布的崗位先保留，讓「尚未公布」的說明可以正常顯示。管理員永遠看得到全部崗位。
+function visibleExaminerPositions(period){
+  if(isAdmin() || !currentUser) return POSITIONS.slice();
+  return POSITIONS.filter(position=>{
+    const quarter = quarterForExamining(period, position);
+    if(!quarter || !isPublished(quarter)) return true;
+    const winners = winnersFor(quarter, position);
+    return winners.length === 0 || winners.includes(currentUser);
+  });
+}
+// 依目前的考核期間，重新計算「崗位」下拉選單看得到哪些選項；
+// 如果一般夥伴完全沒有崗位可選（全部已公布且都沒當選），整張表單換成一則提示文字。
+function renderExPositionOptions(){
+  const period = document.getElementById("ex-period").value;
+  const select = document.getElementById("ex-position");
+  const prevValue = select.value;
+  const formCard = document.getElementById("ex-form-card");
+  const noDutyMsg = document.getElementById("ex-no-duty-msg");
+  const positions = visibleExaminerPositions(period);
+
+  if(currentUser && !isAdmin() && positions.length === 0){
+    if(formCard) formCard.style.display = "none";
+    if(noDutyMsg) noDutyMsg.style.display = "block";
+    return;
+  }
+  if(formCard) formCard.style.display = "block";
+  if(noDutyMsg) noDutyMsg.style.display = "none";
+
+  fillSelect(select, positions);
+  select.value = positions.includes(prevValue) ? prevValue : positions[0];
+}
+
 function checkExaminerEligibility(){
   const staff = exStaffValue;
   const position = document.getElementById("ex-position").value;
@@ -1846,7 +1907,7 @@ function checkExaminerEligibility(){
     return;
   }
 
-  const quarter = effectiveQuarter(period);
+  const quarter = quarterForExamining(period, position);
   if(!quarter || !isPublished(quarter)){
     btn.disabled = true;
     setBlockMsg("ex-msg","warn",`${quarter || "本期"}尚未公布「${position}」崗位的考官選舉結果，暫時無法送出考官評分，請等管理員公布。`);
@@ -1871,7 +1932,7 @@ function saveExaminer(){
   if(!staff){ showMsg("ex-msg","warn","請先選擇被考核人"); return; }
   if(staff === currentUser){ showMsg("ex-msg","warn","不能評分自己"); return; }
 
-  const quarter = effectiveQuarter(period);
+  const quarter = quarterForExamining(period, position);
   if(!quarter || !isPublished(quarter)){
     showMsg("ex-msg","warn",`${quarter || "本期"}尚未公布「${position}」崗位的考官選舉結果，暫時無法送出考官評分，請等管理員公布。`);
     return;
@@ -2161,6 +2222,15 @@ function effectiveQuarter(period){
   const overrides = loadPeriodQuarterOverride();
   if(overrides[period]) return overrides[period];
   return periodToQuarter(period);
+}
+// 考官評分要判斷「這個崗位、這個月，該採用哪一次選舉的結果」，優先順序：
+// ①這個崗位有沒有被綁定特定季度（電舉季度綁定，比較細） → ②這個月有沒有被指定特定季度（本月考官選舉期別） → ③日曆自動判斷。
+// 這樣「選舉季度綁定」（給投票用）跟「本月考官選舉期別」（給評分用）兩個機制才會算出一致的結果，不會兜不起來。
+function quarterForExamining(period, position){
+  const bind = loadElectionQuarterBind();
+  const v = bind[position];
+  if(v && v.trim()) return v.trim();
+  return effectiveQuarter(period);
 }
 function setQuarterOverride(period, quarter){
   if(!isAdmin() || !period) return;
