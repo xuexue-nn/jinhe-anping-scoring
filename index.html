@@ -192,6 +192,7 @@
     <div class="card">
       <h2>考官評分表</h2>
       <p class="helptext">考官身份已鎖定為你登入的姓名，不能替其他人填寫，也不能評自己。若該崗位本季已由管理員公布考官選舉結果，只有當選的考官才能送出評分；若還沒公布考官選舉結果，暫時無法送出考官評分。</p>
+      <p class="helptext" id="ex-deadline-status"></p>
       <div class="row">
         <div class="field">
           <label>考核期間</label>
@@ -283,6 +284,7 @@
     <div class="card">
       <h2>個人自評表</h2>
       <p class="helptext">「我是」已鎖定為你登入的姓名，不能替其他夥伴填寫自評。</p>
+      <p class="helptext" id="sf-deadline-status"></p>
       <div class="row">
         <div class="field">
           <label>考核期間</label>
@@ -308,7 +310,7 @@
       </div>
 
       <div class="btnrow">
-        <button class="primary" onclick="saveSelf()">儲存我的自評</button>
+        <button class="primary" id="sf-save-btn" onclick="saveSelf()">儲存我的自評</button>
         <button class="ghost" onclick="exportOne('self')">匯出此筆（JSON，給店主管合併）</button>
       </div>
       <div class="msg" id="sf-msg"></div>
@@ -365,6 +367,42 @@
       <h2>崗位資格設定（僅管理員可見）</h2>
       <p class="helptext">勾選代表這位夥伴已經學會這個崗位。「考官評分」分頁的被考核人按鈕，只會列出已勾選的人。<b>這只會更新在你自己這台裝置上</b>，勾選完記得到下方「設定同步」把最新設定同步出去，大家的裝置才會套用。</p>
       <div id="learned-table"></div>
+    </div>
+
+    <div class="card" id="ov-deadline-card" style="display:none;">
+      <h2>填寫截止時間設定（僅管理員可見）</h2>
+      <p class="helptext">設定每個月「考官評分」「個人自評」各自的填寫截止時間，時間到了大家就無法再送出，畫面上會顯示倒數。兩者可以分開設定，留空代表這個月這一項沒有時間限制。</p>
+      <div class="row">
+        <div class="field">
+          <label>設定月份</label>
+          <input type="month" id="ov-deadline-period">
+        </div>
+        <div class="field">
+          <label>考官評分截止時間</label>
+          <input type="datetime-local" id="ov-deadline-examiner">
+        </div>
+        <div class="field">
+          <label>個人自評截止時間</label>
+          <input type="datetime-local" id="ov-deadline-self">
+        </div>
+      </div>
+      <div class="btnrow">
+        <button class="primary" onclick="saveDeadlinesFromInputs()">儲存這個月的截止時間</button>
+        <button class="ghost" onclick="clearDeadlinesFromInputs()">清除這個月的截止時間（恢復不限時）</button>
+      </div>
+      <div class="msg" id="ov-deadline-msg"></div>
+    </div>
+
+    <div class="card" id="ov-reopen-card" style="display:none;">
+      <h2>個別重新開放填寫（僅管理員可見）</h2>
+      <p class="helptext">截止後如果有夥伴真的還沒填、需要補交，可以針對「這個人、這個月、這個項目」單獨重新開放，不影響其他人，也不會出現在夥伴看到的畫面上。</p>
+      <div class="row">
+        <div class="field">
+          <label>月份</label>
+          <input type="month" id="ov-reopen-period">
+        </div>
+      </div>
+      <div id="ov-reopen-table"></div>
     </div>
 
     <div class="card" id="ov-settings-export-card" style="display:none;">
@@ -474,6 +512,16 @@
       <div class="msg" id="el-msg"></div>
     </div>
 
+    <div class="card" id="el-quarterbind-card" style="display:none;">
+      <h2>選舉季度綁定（僅管理員可見）</h2>
+      <p class="helptext">預設會自動用目前的日曆季度（例如7-9月自動對應2026-Q3），大家的「選舉季度」欄位會自動帶出正確值，不用自己填。如果這個崗位這次要用特別名稱辦選舉（例如季中重新選舉），把上面「選舉季度」改成你要的名稱，再按「綁定」，大家的裝置就會自動套用這個名稱，不用自己填、也不會打錯字投錯地方。</p>
+      <div class="btnrow">
+        <button class="primary" onclick="bindQuarterForPosition()">綁定目前這個崗位的選舉季度</button>
+        <button class="ghost" onclick="clearQuarterBindForPosition()">清除綁定（恢復自動判斷）</button>
+      </div>
+      <p class="helptext" id="el-quarterbind-status"></p>
+    </div>
+
     <div class="card" id="el-admin-card" style="display:none;">
       <h2>管理員設定（僅管理員可見）</h2>
       <p class="helptext" id="el-admin-status"></p>
@@ -512,7 +560,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-21-11";
+const APP_VERSION = "2026-07-21-15";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -584,6 +632,9 @@ const HOURS_KEY = "jinheAnping_parttime_hours_v1";
 const LEARNED_KEY = "jinheAnping_learned_positions_v1";
 const VOTE_EXEMPT_KEY = "jinheAnping_vote_exempt_v1";
 const PERIOD_QUARTER_OVERRIDE_KEY = "jinheAnping_period_quarter_override_v1";
+const ELECTION_QUARTER_BIND_KEY = "jinheAnping_election_quarter_bind_v1";
+const SUBMIT_DEADLINE_KEY = "jinheAnping_submit_deadline_v1";
+const SUBMIT_REOPEN_KEY = "jinheAnping_submit_reopen_v1";
 const SYNC_URL_KEY = "jinheAnping_sync_url_v1";
 const SYNC_SECRET_KEY = "jinheAnping_sync_secret_v1";
 const PIN_KEY = "jinheAnping_login_pins_v1";
@@ -840,8 +891,10 @@ function enterApp(){
   renderAdminPanel();
   renderQuarterOverridePanel();
   renderOverview();
+  applyBoundQuarter();
   renderVoteResults();
   renderQuarterSummary();
+  checkSelfEligibility();
 }
 
 /* ========== 資料存取 ========== */
@@ -1080,6 +1133,153 @@ function renderVoteGate(){
   }
 }
 
+/* ========== 填寫截止時間（管理員設定每月的考官評分／個人自評截止時間，超過就鎖定無法送出） ========== */
+function loadSubmitDeadlines(){
+  try{ return JSON.parse(localStorage.getItem(SUBMIT_DEADLINE_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveSubmitDeadlines(m){ localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(m)); }
+// 重新開放清單刻意不對夥伴公開說明「管理員可以這樣做」，畫面上鎖定訊息只會請他們洽詢管理員，
+// 不會提到有這個機制存在，跟系統一貫「NN的手動調整權限不對外揭露」的作法一致。
+function loadSubmitReopens(){
+  try{ return JSON.parse(localStorage.getItem(SUBMIT_REOPEN_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveSubmitReopens(m){ localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(m)); }
+
+function getDeadline(period, type){
+  const m = loadSubmitDeadlines();
+  const v = m[period] && m[period][type];
+  if(!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+function isPastDeadline(period, type){
+  const d = getDeadline(period, type);
+  if(!d) return false;
+  return Date.now() > d.getTime();
+}
+function isReopenedFor(period, type, name){
+  const m = loadSubmitReopens();
+  return !!(m[period] && m[period][type] && m[period][type][name]);
+}
+// 畫面鎖定跟按鈕disable用這個判斷；saveExaminer/saveSelf存檔前也會再檢查一次，避免單純改前端就繞過。
+function canSubmit(period, type, name){
+  if(!isPastDeadline(period, type)) return true;
+  return !!(name && isReopenedFor(period, type, name));
+}
+function formatCountdown(ms){
+  const totalMin = Math.max(0, Math.floor(ms/60000));
+  const days = Math.floor(totalMin/1440);
+  const hours = Math.floor((totalMin%1440)/60);
+  const mins = totalMin%60;
+  const parts = [];
+  if(days>0) parts.push(`${days}天`);
+  if(days>0 || hours>0) parts.push(`${hours}時`);
+  parts.push(`${mins}分`);
+  return parts.join("");
+}
+// 在指定的 elId（一段 helptext）顯示截止時間跟倒數，或是「已截止」的提示；沒設定截止時間就不顯示任何東西。
+// 重點：如果這個人被管理員個別重新開放了，畫面上完全不提「重新開放」這件事、什麼提示都不顯示，
+// 跟「這個月本來就沒設截止時間」看起來一模一樣，夥伴沒有辦法分辨兩種情況，管理員這個權限才不會被發現。
+function renderDeadlineStatus(period, type, elId, name){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  const deadline = getDeadline(period, type);
+  if(!deadline){ el.textContent = ""; return; }
+  const diff = deadline.getTime() - Date.now();
+  const label = type === "examiner" ? "考官評分" : "個人自評";
+  if(diff > 0){
+    el.textContent = `本月「${label}」截止時間：${deadline.toLocaleString("zh-TW")}（倒數 ${formatCountdown(diff)}）`;
+  } else if(name && isReopenedFor(period, type, name)){
+    el.textContent = "";
+  } else {
+    el.textContent = `本月「${label}」已於 ${deadline.toLocaleString("zh-TW")} 截止，無法再送出，如需協助請洽管理員。`;
+  }
+}
+
+function loadDeadlineInputsForPeriod(){
+  const period = document.getElementById("ov-deadline-period").value;
+  const m = loadSubmitDeadlines();
+  const rec = m[period] || {};
+  document.getElementById("ov-deadline-examiner").value = rec.examiner || "";
+  document.getElementById("ov-deadline-self").value = rec.self || "";
+}
+function saveDeadlinesFromInputs(){
+  if(!isAdmin()) return;
+  const period = document.getElementById("ov-deadline-period").value;
+  if(!period){ showMsg("ov-deadline-msg","warn","請先選擇月份"); return; }
+  const examinerVal = document.getElementById("ov-deadline-examiner").value;
+  const selfVal = document.getElementById("ov-deadline-self").value;
+  const m = loadSubmitDeadlines();
+  if(!m[period]) m[period] = {};
+  if(examinerVal){ m[period].examiner = examinerVal; } else { delete m[period].examiner; }
+  if(selfVal){ m[period].self = selfVal; } else { delete m[period].self; }
+  if(Object.keys(m[period]).length === 0) delete m[period];
+  saveSubmitDeadlines(m);
+  showMsg("ov-deadline-msg","ok",`已儲存 ${period} 的截止時間，記得到下方「設定同步」按一次「同步到雲端」，大家的裝置才會套用。`);
+  checkExaminerEligibility();
+  checkSelfEligibility();
+}
+function clearDeadlinesFromInputs(){
+  if(!isAdmin()) return;
+  const period = document.getElementById("ov-deadline-period").value;
+  if(!period){ showMsg("ov-deadline-msg","warn","請先選擇月份"); return; }
+  const m = loadSubmitDeadlines();
+  delete m[period];
+  saveSubmitDeadlines(m);
+  document.getElementById("ov-deadline-examiner").value = "";
+  document.getElementById("ov-deadline-self").value = "";
+  showMsg("ov-deadline-msg","ok",`已清除 ${period} 的截止時間限制，記得同步到雲端。`);
+  checkExaminerEligibility();
+  checkSelfEligibility();
+}
+
+function toggleSubmitReopen(period, type, name, checked){
+  if(!isAdmin()) return;
+  const m = loadSubmitReopens();
+  if(!m[period]) m[period] = {};
+  if(!m[period][type]) m[period][type] = {};
+  if(checked){ m[period][type][name] = true; } else { delete m[period][type][name]; }
+  saveSubmitReopens(m);
+  renderReopenPanel();
+  checkExaminerEligibility();
+  checkSelfEligibility();
+}
+function renderReopenPanel(){
+  const card = document.getElementById("ov-reopen-card");
+  if(!card) return;
+  if(!isAdmin()){ card.style.display = "none"; return; }
+  card.style.display = "block";
+  const periodEl = document.getElementById("ov-reopen-period");
+  if(!periodEl.value) periodEl.value = currentMonth();
+  const period = periodEl.value;
+  const reopens = loadSubmitReopens();
+  const header = `<th class="left">姓名</th><th>考官評分</th><th>個人自評</th>`;
+  const rows = STAFF.map(name=>{
+    const exOn = !!(reopens[period] && reopens[period].examiner && reopens[period].examiner[name]);
+    const sfOn = !!(reopens[period] && reopens[period].self && reopens[period].self[name]);
+    const safeName = name.replace(/'/g,"\\'");
+    return `<tr>
+      <td class="left">${escapeHtml(name)}</td>
+      <td><input type="checkbox" ${exOn ? "checked" : ""} onchange="toggleSubmitReopen('${period}','examiner','${safeName}', this.checked)"></td>
+      <td><input type="checkbox" ${sfOn ? "checked" : ""} onchange="toggleSubmitReopen('${period}','self','${safeName}', this.checked)"></td>
+    </tr>`;
+  }).join("");
+  document.getElementById("ov-reopen-table").innerHTML = `<table><tr>${header}</tr>${rows}</table>`;
+}
+function renderDeadlineAdminCards(){
+  const deadlineCard = document.getElementById("ov-deadline-card");
+  if(deadlineCard) deadlineCard.style.display = isAdmin() ? "block" : "none";
+  if(isAdmin()){
+    if(!document.getElementById("ov-deadline-period").value){
+      document.getElementById("ov-deadline-period").value = currentMonth();
+      loadDeadlineInputsForPeriod();
+    }
+  }
+  renderReopenPanel();
+}
+
 function renderSettingsExportCard(){
   const card = document.getElementById("ov-settings-export-card");
   if(!isAdmin()){ card.style.display = "none"; return; }
@@ -1102,6 +1302,9 @@ function exportSettingsJSON(){
     hours: loadHours(),
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
+    electionQuarterBind: loadElectionQuarterBind(),
+    submitDeadline: loadSubmitDeadlines(),
+    submitReopen: loadSubmitReopens(),
     appVersion: APP_VERSION,
     ts: Date.now()
   };
@@ -1126,15 +1329,21 @@ function importSettingsFile(){
       if(obj.hours) localStorage.setItem(HOURS_KEY, JSON.stringify(obj.hours));
       if(obj.voteExempt) localStorage.setItem(VOTE_EXEMPT_KEY, JSON.stringify(obj.voteExempt));
       if(obj.periodQuarterOverride) localStorage.setItem(PERIOD_QUARTER_OVERRIDE_KEY, JSON.stringify(obj.periodQuarterOverride));
+      if(obj.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(obj.electionQuarterBind));
+      if(obj.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(obj.submitDeadline));
+      if(obj.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(obj.submitReopen));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
       renderExStaffButtons();
       renderVoteGate();
+      applyBoundQuarter();
+      checkExaminerEligibility();
+      checkSelfEligibility();
       if(isAdmin()){
         renderStaffListPanel();
         renderLearnedPanel();
         renderVoteExemptPanel();
         renderQuarterOverridePanel();
-        renderPersonnelPanel();
+        renderDeadlineAdminCards();
         renderOverview();
       }
     }catch(err){
@@ -1158,14 +1367,20 @@ function applyCloudSettings(data){
   if(data.hours) localStorage.setItem(HOURS_KEY, JSON.stringify(data.hours));
   if(data.voteExempt) localStorage.setItem(VOTE_EXEMPT_KEY, JSON.stringify(data.voteExempt));
   if(data.periodQuarterOverride) localStorage.setItem(PERIOD_QUARTER_OVERRIDE_KEY, JSON.stringify(data.periodQuarterOverride));
+  if(data.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(data.electionQuarterBind));
+  if(data.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(data.submitDeadline));
+  if(data.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(data.submitReopen));
   renderExStaffButtons();
   renderVoteGate();
+  applyBoundQuarter();
+  checkExaminerEligibility();
+  checkSelfEligibility();
   if(isAdmin()){
     renderStaffListPanel();
     renderLearnedPanel();
     renderVoteExemptPanel();
     renderQuarterOverridePanel();
-    renderPersonnelPanel();
+    renderDeadlineAdminCards();
     renderOverview();
   }
 }
@@ -1291,6 +1506,9 @@ async function pushSettingsToCloud(){
     hours: loadHours(),
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
+    electionQuarterBind: loadElectionQuarterBind(),
+    submitDeadline: loadSubmitDeadlines(),
+    submitReopen: loadSubmitReopens(),
     appVersion: APP_VERSION
   };
   statusEl.textContent = "同步中…";
@@ -1550,12 +1768,17 @@ function initCommon(){
 
   document.getElementById("ex-position").addEventListener("change", renderExStaffButtons);
   document.getElementById("ex-period").addEventListener("change", ()=>{ renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); });
+  document.getElementById("sf-position").addEventListener("change", checkSelfEligibility);
+  document.getElementById("sf-period").addEventListener("change", checkSelfEligibility);
 
   fillSelect(document.getElementById("el-position"), POSITIONS);
   fillVoteCandidateSelects();
-  document.getElementById("el-quarter").value = currentQuarter();
+  applyBoundQuarter();
   document.getElementById("el-quarter").addEventListener("change", ()=>{ renderVoteResults(); renderQuarterSummary(); });
-  document.getElementById("el-position").addEventListener("change", renderVoteResults);
+  document.getElementById("el-position").addEventListener("change", ()=>{ applyBoundQuarter(); renderVoteResults(); });
+
+  document.getElementById("ov-deadline-period").addEventListener("change", loadDeadlineInputsForPeriod);
+  document.getElementById("ov-reopen-period").addEventListener("change", renderReopenPanel);
 }
 
 /* ========== 被考核人按鈕（依崗位資格篩選） ========== */
@@ -1603,6 +1826,13 @@ function checkExaminerEligibility(){
 
   btn.disabled = false;
   clearBlockMsg("ex-msg");
+  renderDeadlineStatus(period, "examiner", "ex-deadline-status", currentUser);
+
+  if(!canSubmit(period, "examiner", currentUser)){
+    btn.disabled = true;
+    setBlockMsg("ex-msg","warn","本月考官評分已截止，無法再送出，如需協助請洽管理員。");
+    return;
+  }
 
   if(!staff){
     btn.disabled = true;
@@ -1637,6 +1867,7 @@ function saveExaminer(){
   const note = document.getElementById("ex-note").value.trim();
   if(!period){ showMsg("ex-msg","warn","請先選擇考核期間"); return; }
   if(!currentUser){ showMsg("ex-msg","warn","請先登入"); return; }
+  if(!canSubmit(period, "examiner", currentUser)){ showMsg("ex-msg","warn","本月考官評分已截止，無法再送出，如需協助請洽管理員。"); return; }
   if(!staff){ showMsg("ex-msg","warn","請先選擇被考核人"); return; }
   if(staff === currentUser){ showMsg("ex-msg","warn","不能評分自己"); return; }
 
@@ -1761,6 +1992,7 @@ function saveSelf(){
   const note = document.getElementById("sf-note").value.trim();
   if(!period){ showMsg("sf-msg","warn","請先選擇考核期間"); return; }
   if(!currentUser){ showMsg("sf-msg","warn","請先登入"); return; }
+  if(!canSubmit(period, "self", currentUser)){ showMsg("sf-msg","warn","本月個人自評已截止，無法再送出，如需協助請洽管理員。"); return; }
 
   const scores = readItemFields("sf");
   const data = loadData();
@@ -1769,8 +2001,35 @@ function saveSelf(){
   saveData(data);
 
   const w = weighted(scores).toFixed(2);
-  showMsg("sf-msg","ok",`已儲存 ${currentUser} 在「${position}」的自評，加權分數 ${w} 分。`);
+  showMsg("sf-msg","ok",`已儲存 ${currentUser} 在「${position}」的自評，加權分數 ${w} 分，可以繼續填下一個崗位。`);
   pushSubmissionToCloud({type:"self", period, position, staff: currentUser, note, ...scores});
+
+  // 存檔成功後自動清空分數與備註，方便接著填下一個崗位的自評，不用手動刪掉這次留下的文字。
+  resetSelfFields();
+}
+
+// 跟考官評分的checkExaminerEligibility()是同一個模式：畫面上顯示截止倒數，超過就鎖定存檔按鈕。
+function checkSelfEligibility(){
+  const period = document.getElementById("sf-period").value;
+  const btn = document.getElementById("sf-save-btn");
+  if(!btn) return;
+  btn.disabled = false;
+  clearBlockMsg("sf-msg");
+  renderDeadlineStatus(period, "self", "sf-deadline-status", currentUser);
+  if(!canSubmit(period, "self", currentUser)){
+    btn.disabled = true;
+    setBlockMsg("sf-msg","warn","本月個人自評已截止，無法再送出，如需協助請洽管理員。");
+  }
+}
+
+// 只重設畫面上的分數滑桿與備註欄，不動已選的考核期間/崗位、不影響已存的資料。
+function resetSelfFields(){
+  ITEMS.forEach(item=>{
+    const el = document.getElementById(`sf-${item.key}`);
+    el.value = 5;
+    document.getElementById(`sf-${item.key}-val`).textContent = "5";
+  });
+  document.getElementById("sf-note").value = "";
 }
 
 /* ========== 考官選舉：資料存取 ========== */
@@ -1790,6 +2049,65 @@ function currentQuarter(){
   const q = Math.floor(d.getMonth()/3) + 1;
   return d.getFullYear() + "-Q" + q;
 }
+
+/* ========== 選舉季度綁定：管理員把「這個崗位目前要用的選舉季度名稱」設定好，大家自動套用，不用自己打字 ========== */
+function loadElectionQuarterBind(){
+  try{ return JSON.parse(localStorage.getItem(ELECTION_QUARTER_BIND_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveElectionQuarterBind(m){ localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(m)); }
+// 有綁定就用綁定的名稱，沒有綁定就照原本的日曆規則自動判斷（例如7-9月自動對應2026-Q3）。
+function effectiveVoteQuarter(position){
+  const bind = loadElectionQuarterBind();
+  const v = bind[position];
+  return (v && v.trim()) ? v.trim() : currentQuarter();
+}
+// 每次切換崗位、或登入時，把「選舉季度」欄位自動帶成這個崗位目前該用的值；
+// 欄位本身還是可以手動修改（例如管理員想開一次全新的季中選舉、或想回頭查看某個舊季度的結果），
+// 這裡只是負責「預設值算對」，不會強制鎖死不能改。
+function applyBoundQuarter(){
+  const positionEl = document.getElementById("el-position");
+  const quarterEl = document.getElementById("el-quarter");
+  if(!positionEl || !quarterEl) return;
+  quarterEl.value = effectiveVoteQuarter(positionEl.value);
+  renderQuarterBindPanel();
+}
+function bindQuarterForPosition(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const quarter = document.getElementById("el-quarter").value.trim();
+  if(!quarter){ showMsg("el-msg","warn","請先在「選舉季度」欄位填好要綁定的名稱"); return; }
+  const bind = loadElectionQuarterBind();
+  bind[position] = quarter;
+  saveElectionQuarterBind(bind);
+  renderQuarterBindPanel();
+  showMsg("el-msg","ok",`已把「${position}」的選舉季度綁定為「${quarter}」，記得到「評分總覽」的設定同步按一次「同步到雲端」，大家的裝置才會自動套用。`);
+}
+function clearQuarterBindForPosition(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const bind = loadElectionQuarterBind();
+  delete bind[position];
+  saveElectionQuarterBind(bind);
+  applyBoundQuarter();
+  showMsg("el-msg","ok",`已清除「${position}」的季度綁定，恢復自動依日曆判斷，記得同步到雲端。`);
+}
+function renderQuarterBindPanel(){
+  const card = document.getElementById("el-quarterbind-card");
+  if(!card) return;
+  if(!isAdmin()){ card.style.display = "none"; return; }
+  card.style.display = "block";
+  const position = document.getElementById("el-position").value;
+  const bind = loadElectionQuarterBind();
+  const statusEl = document.getElementById("el-quarterbind-status");
+  if(!statusEl) return;
+  if(bind[position]){
+    statusEl.textContent = `「${position}」目前綁定季度：${bind[position]}（大家的裝置會自動套用這個名稱，不用自己填）`;
+  } else {
+    statusEl.textContent = `「${position}」目前沒有綁定，大家會自動依日曆季度判斷（目前：${currentQuarter()}）`;
+  }
+}
+
 function winnerCount(position){
   return position === "接待" ? 2 : 3;
 }
@@ -1944,9 +2262,20 @@ function saveVote(){
   saveVotes(votes);
 
   showMsg("el-msg","ok",`已送出 ${currentUser} 對「${position}」崗位（${quarter}）的投票。`);
+  resetVoteFields();
   renderVoteResults();
   renderQuarterSummary();
   pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason});
+}
+
+// 送出投票後，把排名跟判斷依據清空，方便接著投下一個崗位，不用手動刪掉上一次留下的文字。
+function resetVoteFields(){
+  ["vote-first","vote-second","vote-third"].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.value = "";
+  });
+  const reasonEl = document.getElementById("vote-reason");
+  if(reasonEl) reasonEl.value = "";
 }
 
 function renderVoteResults(){
@@ -1958,6 +2287,7 @@ function renderVoteResults(){
   renderAdminPanel();
   renderVoteExemptPanel();
   renderVoteGate();
+  renderQuarterBindPanel();
 
   const el = document.getElementById("el-result-table");
   if(!isAdmin() && !isPublished(quarter)){
@@ -1982,10 +2312,13 @@ function renderVoteResults(){
       <td><b>${c.score}</b></td>
     </tr>`;
   }).join("");
+  // 判斷依據給管理員看時附上投票人姓名（方便NN了解狀況、必要時追問）；
+  // 一般夥伴公布後看到的是匿名版本，只看得到大家寫了什麼，看不到是誰寫的。
   const reasonRows = Object.keys(record.ballots).map(voter=>{
     const b = record.ballots[voter];
     if(!b.reason) return "";
-    return `<div style="margin-bottom:6px;"><b>${escapeHtml(voter)}：</b>${nl2br(b.reason)}</div>`;
+    const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
+    return `<div style="margin-bottom:6px;">${label}${nl2br(b.reason)}</div>`;
   }).join("");
   el.innerHTML = `
     <table>
@@ -2242,6 +2575,7 @@ function renderOverview(){
   renderStaffListPanel();
   renderPersonnelPanel();
   renderLearnedPanel();
+  renderDeadlineAdminCards();
   renderSettingsExportCard();
   const dataMergeCard = document.getElementById("ov-datamerge-card");
   dataMergeCard.style.display = isAdmin() ? "block" : "none";
@@ -2468,6 +2802,13 @@ function checkMonthRollover(){
   lastKnownMonth = nowMonth;
 }
 setInterval(checkMonthRollover, 60 * 60 * 1000);
+
+// 截止倒數要一直跳動、時間到了要自動鎖住，所以每分鐘重新檢查一次考官評分／個人自評的截止狀態。
+setInterval(()=>{
+  if(!currentUser) return;
+  checkExaminerEligibility();
+  checkSelfEligibility();
+}, 60 * 1000);
 </script>
 </body>
 </html>
