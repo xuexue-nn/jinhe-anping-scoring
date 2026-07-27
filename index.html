@@ -292,7 +292,11 @@
 
   <!-- ================= 個人自評 ================= -->
   <div class="tab" id="tab-self">
-    <div class="card">
+    <div class="card" id="sf-no-duty-msg" style="display:none;">
+      <h2>個人自評表</h2>
+      <p class="helptext">你目前沒有任何標記「已學會」的崗位，這個月不用填寫自評。如果這是誤判，請聯絡管理員到「評分總覽」調整崗位資格設定。</p>
+    </div>
+    <div class="card" id="sf-form-card">
       <h2>個人自評表</h2>
       <p class="helptext">「我是」已鎖定為你登入的姓名，不能替其他夥伴填寫自評。</p>
       <div class="deadline-banner" id="sf-deadline-status"></div>
@@ -577,7 +581,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-27-19";
+const APP_VERSION = "2026-07-27-20";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -906,6 +910,7 @@ function enterApp(){
   document.getElementById("sf-name-display").textContent = currentUser;
   document.getElementById("el-voter-display").textContent = currentUser;
   renderExPositionOptions();
+  renderSfPositionOptions();
   renderExStaffButtons();
   renderAdminPanel();
   renderQuarterOverridePanel();
@@ -1366,6 +1371,7 @@ function importSettingsFile(){
       if(obj.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(obj.publishedResults));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
       renderExPositionOptions();
+      renderSfPositionOptions();
       renderExStaffButtons();
       renderVoteGate();
       applyBoundQuarter();
@@ -1407,6 +1413,7 @@ function applyCloudSettings(data){
   if(data.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(data.scorePublish));
   if(data.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(data.publishedResults));
   renderExPositionOptions();
+  renderSfPositionOptions();
   renderExStaffButtons();
   renderVoteGate();
   applyBoundQuarter();
@@ -1534,7 +1541,20 @@ async function pushSettingsToCloud(){
   urlInput.value = url;
   secretInput.value = secret;
 
-  // 每次同步到雲端，都用這台裝置目前本機的票數重新整理一次已公布結果快照，
+  // 同步到雲端之前，先自動把雲端上大家目前最新的評分/投票收集回來合併進本機，
+  // 確保等一下重新整理的「已公布結果快照」一定是用最完整的票數算出來的——
+  // 不用再擔心忘記先按「收集」才去同步，導致夥伴那邊看到的票數跟NN這邊對不起來。
+  statusEl.textContent = "同步前先收集最新票數…";
+  try{
+    const collectRes = await fetch(url + (url.includes("?") ? "&" : "?") + "mode=submissions&secret=" + encodeURIComponent(secret));
+    const collectJson = await collectRes.json();
+    if(collectJson && collectJson.ok){
+      mergeCloudDataIntoLocal((collectJson.data && collectJson.data.scores) || {});
+      mergeCloudVotesIntoLocal((collectJson.data && collectJson.data.votes) || {});
+    }
+  }catch(err){ /* 收集失敗就用本機現有資料繼續同步，不中斷整個流程 */ }
+
+  // 每次同步到雲端，都用這台裝置目前（收集過後）本機的票數重新整理一次已公布結果快照，
   // 確保夥伴那邊拿到的是最新結果，不用另外再按一次「公布」才會更新。
   refreshPublishedResultsSnapshot();
 
@@ -1561,6 +1581,9 @@ async function pushSettingsToCloud(){
     const json = await res.json();
     if(json && json.ok){
       statusEl.textContent = `已同步到雲端（${new Date().toLocaleString("zh-TW")}），大家開啟系統時會自動更新。`;
+      renderOverview();
+      renderVoteResults();
+      renderQuarterSummary();
     } else {
       statusEl.textContent = "同步失敗：" + (json && json.error ? json.error : "未知錯誤，請確認管理密碼是否正確。");
     }
@@ -1807,7 +1830,7 @@ function initCommon(){
   document.getElementById("ex-period").value = currentMonth();
   document.getElementById("sf-period").value = currentMonth();
   renderExPositionOptions();
-  fillSelect(document.getElementById("sf-position"), POSITIONS);
+  renderSfPositionOptions();
   buildItemFields(document.getElementById("ex-items"), "ex");
   buildItemFields(document.getElementById("sf-items"), "sf");
 
@@ -1865,6 +1888,28 @@ function clearBlockMsg(id){
 
 // 已公布的崗位如果我沒當選，就從下拉選單直接拿掉，不用讓夥伴自己一個個試才發現不能填；
 // 還沒公布的崗位先保留，讓「尚未公布」的說明可以正常顯示。管理員永遠看得到全部崗位。
+// 個人自評的崗位下拉，只開放這個人自己被標記「已學會」的崗位；管理員例外，永遠看得到全部崗位方便管理/測試。
+function visibleSelfPositions(){
+  if(isAdmin() || !currentUser) return POSITIONS.slice();
+  return POSITIONS.filter(position => isLearned(currentUser, position));
+}
+function renderSfPositionOptions(){
+  const select = document.getElementById("sf-position");
+  const prevValue = select.value;
+  const formCard = document.getElementById("sf-form-card");
+  const noDutyMsg = document.getElementById("sf-no-duty-msg");
+  const positions = visibleSelfPositions();
+  if(currentUser && !isAdmin() && positions.length === 0){
+    if(formCard) formCard.style.display = "none";
+    if(noDutyMsg) noDutyMsg.style.display = "block";
+    return;
+  }
+  if(formCard) formCard.style.display = "block";
+  if(noDutyMsg) noDutyMsg.style.display = "none";
+  fillSelect(select, positions);
+  select.value = positions.includes(prevValue) ? prevValue : positions[0];
+}
+
 function visibleExaminerPositions(period){
   if(isAdmin() || !currentUser) return POSITIONS.slice();
   return POSITIONS.filter(position=>{
