@@ -571,7 +571,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-26-17";
+const APP_VERSION = "2026-07-27-18";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -638,6 +638,7 @@ const STORE_KEY = "jinheAnping_waichang_scores_v1";
 const VOTE_KEY = "jinheAnping_election_votes_v1";
 const PUBLISH_KEY = "jinheAnping_election_published_v1";
 const SCORE_PUBLISH_KEY = "jinheAnping_score_published_v1";
+const PUBLISHED_RESULTS_KEY = "jinheAnping_published_results_v1";
 const STAFF_TYPE_KEY = "jinheAnping_staff_type_v1";
 const HOURS_KEY = "jinheAnping_parttime_hours_v1";
 const LEARNED_KEY = "jinheAnping_learned_positions_v1";
@@ -1325,6 +1326,7 @@ function exportSettingsJSON(){
     submitReopen: loadSubmitReopens(),
     publish: loadPublish(),
     scorePublish: loadScorePublish(),
+    publishedResults: loadPublishedResults(),
     appVersion: APP_VERSION,
     ts: Date.now()
   };
@@ -1354,6 +1356,7 @@ function importSettingsFile(){
       if(obj.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(obj.submitReopen));
       if(obj.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(obj.publish));
       if(obj.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(obj.scorePublish));
+      if(obj.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(obj.publishedResults));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
       renderExPositionOptions();
       renderExStaffButtons();
@@ -1395,6 +1398,7 @@ function applyCloudSettings(data){
   if(data.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(data.submitReopen));
   if(data.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(data.publish));
   if(data.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(data.scorePublish));
+  if(data.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(data.publishedResults));
   renderExPositionOptions();
   renderExStaffButtons();
   renderVoteGate();
@@ -1523,6 +1527,10 @@ async function pushSettingsToCloud(){
   urlInput.value = url;
   secretInput.value = secret;
 
+  // 每次同步到雲端，都用這台裝置目前本機的票數重新整理一次已公布結果快照，
+  // 確保夥伴那邊拿到的是最新結果，不用另外再按一次「公布」才會更新。
+  refreshPublishedResultsSnapshot();
+
   const payload = {
     type: "settings",
     secret,
@@ -1537,6 +1545,7 @@ async function pushSettingsToCloud(){
     submitReopen: loadSubmitReopens(),
     publish: loadPublish(),
     scorePublish: loadScorePublish(),
+    publishedResults: loadPublishedResults(),
     appVersion: APP_VERSION
   };
   statusEl.textContent = "同步中…";
@@ -1606,6 +1615,7 @@ async function pullSubmissionsFromCloud(){
     }
     mergeCloudDataIntoLocal((json.data && json.data.scores) || {});
     mergeCloudVotesIntoLocal((json.data && json.data.votes) || {});
+    refreshPublishedResultsSnapshot(); // 收集到新票數後，順便把已公布季度的結果快照刷新，記得等一下再按「同步到雲端」把快照送出去
     statusEl.textContent = `已從雲端收集並合併大家的評分與投票（${new Date().toLocaleString("zh-TW")}）。`;
     renderOverview();
     populatePeriodOptions();
@@ -2192,13 +2202,31 @@ function tally(record){
   arr.sort((a,b)=> b.score - a.score || b.c1 - a.c1 || b.c2 - a.c2);
   return arr;
 }
+// 注意：不能用「本機有沒有票數資料」來判斷要不要信任本機資料——
+// 一般夥伴的裝置就算只投了自己那一票，本機也會有「非空」的紀錄，但那只是全體票數的一小部分，
+// 直接拿來算會算出錯的當選名單。正確判斷方式是看「是不是管理員」：只有管理員（收集過大家票數的那台裝置）
+// 才信任本機即時票數，其他人一律優先採用管理員公布/同步時留下的結果快照。
 function winnersFor(quarter, position){
+  const N = winnerCount(position);
+  if(isAdmin()){
+    const votes = loadVotes();
+    const record = votes[voteRecordKey(quarter, position)];
+    if(record && Object.keys(record.ballots || {}).length > 0){
+      return tally(record).slice(0, N).map(r=>r.name);
+    }
+  }
+  const snap = loadPublishedResults();
+  const posSnap = snap[quarter] && snap[quarter][position];
+  if(posSnap && Array.isArray(posSnap.ranked)){
+    return posSnap.ranked.slice(0, N).map(r=>r.name);
+  }
+  // 最後備援（例如快照還沒同步過）：退回本機票數，就算不完整也比完全沒結果好。
   const votes = loadVotes();
   const record = votes[voteRecordKey(quarter, position)];
-  if(!record) return [];
-  const ranked = tally(record);
-  const N = winnerCount(position);
-  return ranked.slice(0, N).map(r=>r.name);
+  if(record && Object.keys(record.ballots || {}).length > 0){
+    return tally(record).slice(0, N).map(r=>r.name);
+  }
+  return [];
 }
 function periodToQuarter(period){
   if(!period) return null;
@@ -2279,6 +2307,44 @@ function loadPublish(){
 function savePublish(p){ localStorage.setItem(PUBLISH_KEY, JSON.stringify(p)); }
 function isPublished(quarter){ return !!loadPublish()[quarter]; }
 
+/* ========== 已公布投票結果快照 ==========
+   一般夥伴的裝置只有「自己投的那一票」，沒有全體票數（全體原始票數只有NN能用管理密碼收集回來），
+   所以夥伴裝置自己重新計算當選名單/投票結果一定不準。公布、或每次同步到雲端時，
+   NN這台裝置（票數最齊全的那台）會把目前算出來的結果整理成一份「不含投票人身份」的快照
+   （只留候選人名次分數，理由文字也拿掉是誰寫的），存進公開的系統設定裡跟著同步出去，
+   夥伴裝置改用這份快照顯示結果，不用自己算不完整的票數。 */
+function loadPublishedResults(){
+  try{ return JSON.parse(localStorage.getItem(PUBLISHED_RESULTS_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function savePublishedResults(obj){ localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(obj)); }
+
+function buildResultSnapshotForPosition(quarter, position){
+  const votes = loadVotes();
+  const record = votes[voteRecordKey(quarter, position)];
+  if(!record || Object.keys(record.ballots || {}).length === 0) return null;
+  const ranked = tally(record).map(r=>({name:r.name, score:r.score, c1:r.c1, c2:r.c2, c3:r.c3}));
+  const reasons = Object.values(record.ballots).map(b=>b.reason).filter(Boolean); // 只留理由文字，不留是誰投的
+  return { ranked, reasons, voterCount: Object.keys(record.ballots).length };
+}
+
+// 用這台裝置目前本機的票數資料，重新整理出所有「目前已公布」季度的結果快照；
+// 只有管理員按公布/取消公布，或按同步到雲端時會呼叫，一般夥伴裝置不會呼叫這個。
+function refreshPublishedResultsSnapshot(){
+  const pub = loadPublish();
+  const snap = {};
+  Object.keys(pub).forEach(quarter=>{
+    if(!pub[quarter]) return;
+    const posMap = {};
+    POSITIONS.forEach(position=>{
+      const s = buildResultSnapshotForPosition(quarter, position);
+      if(s) posMap[position] = s;
+    });
+    snap[quarter] = posMap;
+  });
+  savePublishedResults(snap);
+}
+
 function renderAdminPanel(){
   const card = document.getElementById("el-admin-card");
   if(!isAdmin()){ card.style.display = "none"; return; }
@@ -2297,6 +2363,7 @@ function togglePublish(){
   const pub = loadPublish();
   pub[quarter] = !pub[quarter];
   savePublish(pub);
+  refreshPublishedResultsSnapshot();
   renderAdminPanel();
   renderVoteResults();
   renderQuarterSummary();
@@ -2365,14 +2432,74 @@ function renderVoteResults(){
     return;
   }
 
+  // 只有管理員（收集過大家票數的那台裝置）才信任本機即時票數；一般夥伴的本機頂多只有自己那一票，
+  // 不能拿來算，即使非空也一律改用下面的結果快照，否則會算出錯誤的當選名單。
   const votes = loadVotes();
   const record = votes[voteRecordKey(quarter, position)];
-  if(!record || Object.keys(record.ballots).length === 0){
-    el.innerHTML = `<p class="helptext">此季度、此崗位尚無投票資料。</p>`;
+  if(isAdmin() && record && Object.keys(record.ballots || {}).length > 0){
+    // 判斷依據附上投票人姓名，方便NN了解狀況、必要時追問。
+    const ranked = tally(record);
+    const rows = buildRankRows(ranked, N);
+    const reasonRows = Object.keys(record.ballots).map(voter=>{
+      const b = record.ballots[voter];
+      if(!b.reason) return "";
+      const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
+      return `<div style="margin-bottom:6px;">${label}${nl2br(b.reason)}</div>`;
+    }).join("");
+    el.innerHTML = `
+      <table>
+        <tr><th>名次</th><th class="left">候選人</th><th>第一名票數</th><th>第二名票數</th><th>第三名票數</th><th>總分</th></tr>
+        ${rows}
+      </table>
+      <p class="helptext">已投票人數：${Object.keys(record.ballots).length} 人（${Object.keys(record.ballots).join("、")}）</p>
+      ${reasonRows ? `<div style="margin-top:10px;"><b style="font-size:13px;">大家判斷的依據：</b><div style="margin-top:6px;font-size:12.5px;">${reasonRows}</div></div>` : ""}
+    `;
     return;
   }
-  const ranked = tally(record);
-  const rows = ranked.map((c,i)=>{
+
+  // 改用管理員公布/同步到雲端時留下的結果快照；快照本身不含投票人身份，理由一律不顯示是誰寫的。
+  const snap = loadPublishedResults();
+  const posSnap = snap[quarter] && snap[quarter][position];
+  if(posSnap){
+    const rows = buildRankRows(posSnap.ranked, N);
+    const reasonRows = (posSnap.reasons || []).map(r=>`<div style="margin-bottom:6px;"><span style="color:var(--muted);">・</span> ${nl2br(r)}</div>`).join("");
+    el.innerHTML = `
+      <table>
+        <tr><th>名次</th><th class="left">候選人</th><th>第一名票數</th><th>第二名票數</th><th>第三名票數</th><th>總分</th></tr>
+        ${rows}
+      </table>
+      <p class="helptext">已投票人數：${posSnap.voterCount} 人</p>
+      ${reasonRows ? `<div style="margin-top:10px;"><b style="font-size:13px;">大家判斷的依據：</b><div style="margin-top:6px;font-size:12.5px;">${reasonRows}</div></div>` : ""}
+    `;
+    return;
+  }
+
+  // 最後備援（例如快照還沒同步過）：退回本機票數，就算不完整也比完全沒結果好。
+  if(record && Object.keys(record.ballots || {}).length > 0){
+    const ranked = tally(record);
+    const rows = buildRankRows(ranked, N);
+    const reasonRows = Object.keys(record.ballots).map(voter=>{
+      const b = record.ballots[voter];
+      if(!b.reason) return "";
+      const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
+      return `<div style="margin-bottom:6px;">${label}${nl2br(b.reason)}</div>`;
+    }).join("");
+    el.innerHTML = `
+      <table>
+        <tr><th>名次</th><th class="left">候選人</th><th>第一名票數</th><th>第二名票數</th><th>第三名票數</th><th>總分</th></tr>
+        ${rows}
+      </table>
+      <p class="helptext">已投票人數：${Object.keys(record.ballots).length} 人（${Object.keys(record.ballots).join("、")}）</p>
+      ${reasonRows ? `<div style="margin-top:10px;"><b style="font-size:13px;">大家判斷的依據：</b><div style="margin-top:6px;font-size:12.5px;">${reasonRows}</div></div>` : ""}
+    `;
+    return;
+  }
+
+  el.innerHTML = `<p class="helptext">此季度、此崗位尚無投票資料。</p>`;
+}
+
+function buildRankRows(ranked, N){
+  return (ranked || []).map((c,i)=>{
     const rank = i + 1;
     const win = rank <= N;
     return `<tr>
@@ -2382,22 +2509,6 @@ function renderVoteResults(){
       <td><b>${c.score}</b></td>
     </tr>`;
   }).join("");
-  // 判斷依據給管理員看時附上投票人姓名（方便NN了解狀況、必要時追問）；
-  // 一般夥伴公布後看到的是匿名版本，只看得到大家寫了什麼，看不到是誰寫的。
-  const reasonRows = Object.keys(record.ballots).map(voter=>{
-    const b = record.ballots[voter];
-    if(!b.reason) return "";
-    const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
-    return `<div style="margin-bottom:6px;">${label}${nl2br(b.reason)}</div>`;
-  }).join("");
-  el.innerHTML = `
-    <table>
-      <tr><th>名次</th><th class="left">候選人</th><th>第一名票數</th><th>第二名票數</th><th>第三名票數</th><th>總分</th></tr>
-      ${rows}
-    </table>
-    <p class="helptext">已投票人數：${Object.keys(record.ballots).length} 人（${Object.keys(record.ballots).join("、")}）</p>
-    ${reasonRows ? `<div style="margin-top:10px;"><b style="font-size:13px;">大家判斷的依據：</b><div style="margin-top:6px;font-size:12.5px;">${reasonRows}</div></div>` : ""}
-  `;
 }
 
 function renderQuarterSummary(){
@@ -2409,23 +2520,47 @@ function renderQuarterSummary(){
     return;
   }
 
+  // 只有管理員才信任本機即時票數；一般夥伴的本機頂多只有自己那一票，不能拿來算，
+  // 一律優先改用結果快照，只有快照也沒有時才退回本機票數當最後備援。
   const votes = loadVotes();
+  const snap = loadPublishedResults();
   const rows = POSITIONS.map(p=>{
     const record = votes[voteRecordKey(quarter, p)];
     const N = winnerCount(p);
-    if(!record || Object.keys(record.ballots).length === 0){
+    let ranked = null, voterCount = 0, reasonsHtml = "";
+    if(isAdmin() && record && Object.keys(record.ballots || {}).length > 0){
+      // 理由附上投票人姓名，方便NN了解狀況、必要時追問。
+      ranked = tally(record);
+      voterCount = Object.keys(record.ballots).length;
+      reasonsHtml = Object.keys(record.ballots).map(voter=>{
+        const b = record.ballots[voter];
+        if(!b.reason) return "";
+        return `<div style="margin-bottom:4px;"><b>${escapeHtml(voter)}：</b>${nl2br(b.reason)}</div>`;
+      }).join("");
+    } else {
+      const posSnap = snap[quarter] && snap[quarter][p];
+      if(posSnap){
+        // 結果快照，本身不含投票人身份，理由一律不顯示是誰寫的。
+        ranked = posSnap.ranked;
+        voterCount = posSnap.voterCount;
+        reasonsHtml = (posSnap.reasons || []).map(r=>`<div style="margin-bottom:4px;"><span style="color:var(--muted);">・</span> ${nl2br(r)}</div>`).join("");
+      } else if(record && Object.keys(record.ballots || {}).length > 0){
+        // 最後備援（例如快照還沒同步過）：退回本機票數，就算不完整也比完全沒結果好。
+        ranked = tally(record);
+        voterCount = Object.keys(record.ballots).length;
+        reasonsHtml = Object.keys(record.ballots).map(voter=>{
+          const b = record.ballots[voter];
+          if(!b.reason) return "";
+          const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
+          return `<div style="margin-bottom:4px;">${label}${nl2br(b.reason)}</div>`;
+        }).join("");
+      }
+    }
+    if(!ranked){
       return `<tr><td class="left">${p}</td><td class="status">尚無投票</td><td>0 人</td><td class="left status">—</td></tr>`;
     }
-    const ranked = tally(record);
     const winners = ranked.slice(0,N).map((c,i)=> `${i+1}. ${c.name}（${c.score}分）`).join("　") || "—";
-    // 判斷依據給管理員看時附上投票人姓名，一般夥伴看到的是匿名版本，規則跟上面「投票結果」區塊一致。
-    const reasonsHtml = Object.keys(record.ballots).map(voter=>{
-      const b = record.ballots[voter];
-      if(!b.reason) return "";
-      const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
-      return `<div style="margin-bottom:4px;">${label}${nl2br(b.reason)}</div>`;
-    }).join("");
-    return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${Object.keys(record.ballots).length} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
+    return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${voterCount} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
   }).join("");
 
   el.innerHTML = `
