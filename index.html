@@ -571,7 +571,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-26-16";
+const APP_VERSION = "2026-07-26-17";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -2414,16 +2414,23 @@ function renderQuarterSummary(){
     const record = votes[voteRecordKey(quarter, p)];
     const N = winnerCount(p);
     if(!record || Object.keys(record.ballots).length === 0){
-      return `<tr><td class="left">${p}</td><td class="status">尚無投票</td><td>0 人</td></tr>`;
+      return `<tr><td class="left">${p}</td><td class="status">尚無投票</td><td>0 人</td><td class="left status">—</td></tr>`;
     }
     const ranked = tally(record);
     const winners = ranked.slice(0,N).map((c,i)=> `${i+1}. ${c.name}（${c.score}分）`).join("　") || "—";
-    return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${Object.keys(record.ballots).length} 人</td></tr>`;
+    // 判斷依據給管理員看時附上投票人姓名，一般夥伴看到的是匿名版本，規則跟上面「投票結果」區塊一致。
+    const reasonsHtml = Object.keys(record.ballots).map(voter=>{
+      const b = record.ballots[voter];
+      if(!b.reason) return "";
+      const label = isAdmin() ? `<b>${escapeHtml(voter)}：</b>` : `<span style="color:var(--muted);">・</span> `;
+      return `<div style="margin-bottom:4px;">${label}${nl2br(b.reason)}</div>`;
+    }).join("");
+    return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${Object.keys(record.ballots).length} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
   }).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">崗位</th><th class="left">當選考官（依名次，${quarter}）</th><th>投票人數</th></tr>
+      <tr><th class="left">崗位</th><th class="left">當選考官（依名次，${quarter}）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
       ${rows}
     </table>
   `;
