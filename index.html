@@ -326,6 +326,12 @@
       </div>
       <div class="msg" id="sf-msg"></div>
     </div>
+
+    <div class="card">
+      <h2>我這個月已經送出的自評</h2>
+      <p class="helptext">儲存後畫面上的分數會重設成預設值方便繼續填下一個崗位，不代表沒存到；這裡會列出你目前已經確實存進系統的紀錄，可以用來確認自己填寫成功。</p>
+      <div id="sf-existing"></div>
+    </div>
   </div>
 
   <!-- ================= 總覽 ================= -->
@@ -571,7 +577,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-27-18";
+const APP_VERSION = "2026-07-27-19";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -908,6 +914,7 @@ function enterApp(){
   renderVoteResults();
   renderQuarterSummary();
   checkSelfEligibility();
+  renderExistingSelf();
 }
 
 /* ========== 資料存取 ========== */
@@ -1807,7 +1814,7 @@ function initCommon(){
   document.getElementById("ex-position").addEventListener("change", renderExStaffButtons);
   document.getElementById("ex-period").addEventListener("change", ()=>{ renderExPositionOptions(); renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); });
   document.getElementById("sf-position").addEventListener("change", checkSelfEligibility);
-  document.getElementById("sf-period").addEventListener("change", checkSelfEligibility);
+  document.getElementById("sf-period").addEventListener("change", ()=>{ checkSelfEligibility(); renderExistingSelf(); });
 
   fillSelect(document.getElementById("el-position"), POSITIONS);
   fillVoteCandidateSelects();
@@ -2072,11 +2079,58 @@ function saveSelf(){
   saveData(data);
 
   const w = weighted(scores).toFixed(2);
-  showMsg("sf-msg","ok",`已儲存 ${currentUser} 在「${position}」的自評，加權分數 ${w} 分，可以繼續填下一個崗位。`);
+  showMsg("sf-msg","ok",`已儲存 ${currentUser} 在「${position}」的自評，加權分數 ${w} 分，可以繼續填下一個崗位（下面「已經送出的自評」清單可以確認這筆有存到）。`);
   pushSubmissionToCloud({type:"self", period, position, staff: currentUser, note, ...scores});
 
-  // 存檔成功後自動清空分數與備註，方便接著填下一個崗位的自評，不用手動刪掉這次留下的文字。
+  // 存檔成功後自動清空分數與備註，方便接著填下一個崗位的自評，不用手動刪掉這次留下的文字；
+  // 畫面上的分數重設不代表沒存到，下面會另外列出真正已經存進系統的紀錄，讓夥伴能確認自己填寫成功。
   resetSelfFields();
+  renderExistingSelf();
+}
+
+// 只顯示「我」自己這個考核期間、各崗位已經送出、真正存進系統的自評紀錄，
+// 讓夥伴儲存後即使畫面分數被重設，也能確認自己這筆有沒有存到，不用擔心填了等於沒填。
+function renderExistingSelf(){
+  const period = document.getElementById("sf-period").value;
+  const el = document.getElementById("sf-existing");
+  if(!el) return;
+
+  if(!currentUser){
+    el.innerHTML = `<p class="helptext">請先登入。</p>`;
+    return;
+  }
+
+  const data = loadData();
+  const rows = POSITIONS
+    .map(position=>{
+      const record = data[recordKey(period, position, currentUser)];
+      const s = record && record.self;
+      if(!s) return null;
+      return {position, s, w: weighted(s)};
+    })
+    .filter(Boolean);
+
+  if(rows.length === 0){
+    el.innerHTML = `<p class="helptext">你在「${period}」目前還沒有送出任何崗位的自評。</p>`;
+    return;
+  }
+
+  const trs = rows.map(r=> `
+    <tr>
+      <td class="left">${r.position}</td>
+      <td>${r.s.collab}</td><td>${r.s.efficiency}</td><td>${r.s.quality}</td>
+      <td><b>${r.w.toFixed(2)}</b></td>
+      <td class="status">${r.s.ts ? new Date(r.s.ts).toLocaleString("zh-TW") : "—"}</td>
+    </tr>
+  `).join("");
+
+  el.innerHTML = `
+    <table>
+      <tr><th class="left">崗位</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>加權分數</th><th>儲存時間</th></tr>
+      ${trs}
+    </table>
+    <p class="helptext">同一個崗位重複儲存會覆蓋成最新的一次，這裡只會顯示最後一次存的內容。</p>
+  `;
 }
 
 // 跟考官評分的checkExaminerEligibility()是同一個模式：畫面上顯示截止倒數，超過就鎖定存檔按鈕。
