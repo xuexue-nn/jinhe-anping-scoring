@@ -203,6 +203,7 @@
     <div class="card" id="ex-form-card">
       <h2>考官評分表</h2>
       <p class="helptext">考官身份已鎖定為你登入的姓名，不能替其他人填寫，也不能評自己。若該崗位本季已由管理員公布考官選舉結果，只有當選的考官才能送出評分；若還沒公布考官選舉結果，暫時無法送出考官評分。</p>
+      <p class="helptext">你給的分數與備註<b>是匿名的</b>：被評分的夥伴看不到是哪位考官寫的，只有管理員看得到原始內容，可以放心根據事實填寫。</p>
       <div class="deadline-banner" id="ex-deadline-status"></div>
       <div class="row">
         <div class="field">
@@ -262,6 +263,7 @@
 
     <div class="card">
       <h2>我在這個崗位已經評過的夥伴</h2>
+      <p class="helptext">連備註一起列出來，方便確認自己這筆有沒有確實送出成功；這裡看得到的備註就是你自己剛剛寫的那份。</p>
       <div id="ex-existing"></div>
     </div>
 
@@ -581,7 +583,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-27-20";
+const APP_VERSION = "2026-07-28-22";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -1829,15 +1831,16 @@ function fillSelect(el, arr){
 function initCommon(){
   document.getElementById("ex-period").value = currentMonth();
   document.getElementById("sf-period").value = currentMonth();
-  renderExPositionOptions();
-  renderSfPositionOptions();
+  // 分數滑桿的 DOM 要先建好，下面 renderSfPositionOptions() 才能安全地把已存的分數帶進表單。
   buildItemFields(document.getElementById("ex-items"), "ex");
   buildItemFields(document.getElementById("sf-items"), "sf");
+  renderExPositionOptions();
+  renderSfPositionOptions();
 
   document.getElementById("ex-position").addEventListener("change", renderExStaffButtons);
-  document.getElementById("ex-period").addEventListener("change", ()=>{ renderExPositionOptions(); renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); });
-  document.getElementById("sf-position").addEventListener("change", checkSelfEligibility);
-  document.getElementById("sf-period").addEventListener("change", ()=>{ checkSelfEligibility(); renderExistingSelf(); });
+  document.getElementById("ex-period").addEventListener("change", ()=>{ renderExPositionOptions(); renderExistingExaminer(); checkExaminerEligibility(); renderQuarterOverridePanel(); loadExistingExaminerScoreIntoForm(); });
+  document.getElementById("sf-position").addEventListener("change", ()=>{ checkSelfEligibility(); loadExistingSelfScoreIntoForm(); });
+  document.getElementById("sf-period").addEventListener("change", ()=>{ checkSelfEligibility(); renderExistingSelf(); loadExistingSelfScoreIntoForm(); });
 
   fillSelect(document.getElementById("el-position"), POSITIONS);
   fillVoteCandidateSelects();
@@ -1874,6 +1877,29 @@ function renderExStaffButtons(){
 
   renderExistingExaminer();
   checkExaminerEligibility();
+  loadExistingExaminerScoreIntoForm();
+}
+
+// 選到的被考核人，如果在目前這個期間/崗位已經被我評過分，直接把上次送出的分數跟備註帶進表單，
+// 方便回頭檢視或修改，不會誤以為存檔後分數不見了；還沒評過的話，才顯示預設值 5 分、空白備註。
+function loadExistingExaminerScoreIntoForm(){
+  if(!exStaffValue || !currentUser){ return; }
+  const period = document.getElementById("ex-period").value;
+  const position = document.getElementById("ex-position").value;
+  const data = loadData();
+  const record = data[recordKey(period, position, exStaffValue)];
+  const e = record && record.examiners ? record.examiners[currentUser] : null;
+  if(e){
+    ITEMS.forEach(item=>{
+      const el = document.getElementById(`ex-${item.key}`);
+      const v = (e[item.key] != null && e[item.key] !== "") ? e[item.key] : 5;
+      el.value = v;
+      document.getElementById(`ex-${item.key}-val`).textContent = v;
+    });
+    document.getElementById("ex-note").value = e.note || "";
+  } else {
+    resetExaminerFields();
+  }
 }
 
 function setBlockMsg(id, type, text){
@@ -1908,6 +1934,7 @@ function renderSfPositionOptions(){
   if(noDutyMsg) noDutyMsg.style.display = "none";
   fillSelect(select, positions);
   select.value = positions.includes(prevValue) ? prevValue : positions[0];
+  loadExistingSelfScoreIntoForm(); // 設定 .value 不會觸發 change 事件，這裡手動呼叫確保表單跟著換崗位更新
 }
 
 function visibleExaminerPositions(period){
@@ -2060,6 +2087,7 @@ function deleteExaminerRecord(){
   showMsg("ex-msg","ok",`已刪除你對「${staff}／${position}」（${period}）的評分紀錄。`);
   renderExistingExaminer();
   checkExaminerEligibility();
+  resetExaminerFields(); // 紀錄已刪除，畫面上的分數/備註也一併重設，避免看起來像還留著舊分數
 }
 
 // 只顯示「我」自己在這個崗位、這個期間，已經給過哪些夥伴分數，
@@ -2096,12 +2124,13 @@ function renderExistingExaminer(){
       <td class="left">${r.name}</td>
       <td>${r.e.collab}</td><td>${r.e.efficiency}</td><td>${r.e.quality}</td>
       <td><b>${r.w.toFixed(2)}</b></td>
+      <td class="left" style="font-size:12px;">${r.e.note ? nl2br(r.e.note) : '<span class="status">（無填寫）</span>'}</td>
     </tr>
   `).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">夥伴</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>你給的加權分數</th></tr>
+      <tr><th class="left">夥伴</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>你給的加權分數</th><th class="left">你寫的備註</th></tr>
       ${trs}
     </table>
     <p class="helptext">依你給的加權分數由高到低排列，方便比較不同夥伴之間的評級是否一致；看不到其他考官給的分數。</p>
@@ -2165,13 +2194,14 @@ function renderExistingSelf(){
       <td class="left">${r.position}</td>
       <td>${r.s.collab}</td><td>${r.s.efficiency}</td><td>${r.s.quality}</td>
       <td><b>${r.w.toFixed(2)}</b></td>
+      <td class="left" style="font-size:12px;">${r.s.note ? nl2br(r.s.note) : '<span class="status">（無填寫）</span>'}</td>
       <td class="status">${r.s.ts ? new Date(r.s.ts).toLocaleString("zh-TW") : "—"}</td>
     </tr>
   `).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">崗位</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>加權分數</th><th>儲存時間</th></tr>
+      <tr><th class="left">崗位</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>加權分數</th><th class="left">備註</th><th>儲存時間</th></tr>
       ${trs}
     </table>
     <p class="helptext">同一個崗位重複儲存會覆蓋成最新的一次，這裡只會顯示最後一次存的內容。</p>
@@ -2200,6 +2230,29 @@ function resetSelfFields(){
     document.getElementById(`sf-${item.key}-val`).textContent = "5";
   });
   document.getElementById("sf-note").value = "";
+}
+
+// 選到的崗位，如果這個月已經送出過自評，直接把上次存的分數跟備註帶進表單，方便回頭檢視或修改，
+// 不會誤以為存檔後分數不見了；還沒填過的話，才顯示預設值 5 分、空白備註。
+function loadExistingSelfScoreIntoForm(){
+  if(!currentUser) return;
+  const period = document.getElementById("sf-period").value;
+  const position = document.getElementById("sf-position").value;
+  if(!period || !position) return;
+  const data = loadData();
+  const record = data[recordKey(period, position, currentUser)];
+  const s = record && record.self;
+  if(s){
+    ITEMS.forEach(item=>{
+      const el = document.getElementById(`sf-${item.key}`);
+      const v = (s[item.key] != null && s[item.key] !== "") ? s[item.key] : 5;
+      el.value = v;
+      document.getElementById(`sf-${item.key}-val`).textContent = v;
+    });
+    document.getElementById("sf-note").value = s.note || "";
+  } else {
+    resetSelfFields();
+  }
 }
 
 /* ========== 考官選舉：資料存取 ========== */
