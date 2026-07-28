@@ -349,6 +349,10 @@
           <label>檢視期間</label>
           <select id="ov-period"></select>
         </div>
+        <div class="field" id="ov-staff-filter-field" style="display:none;">
+          <label>只看這位夥伴</label>
+          <select id="ov-staff-filter"></select>
+        </div>
       </div>
       <div id="ov-table"></div>
       <p class="foot-note" id="ov-formula-note">
@@ -583,7 +587,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-28-22";
+const APP_VERSION = "2026-07-28-23";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -2931,6 +2935,18 @@ function populatePeriodOptions(){
   sel.value = periods.includes(cur) ? cur : periods[0];
 }
 
+// 「只看這位夥伴」下拉：只有管理員看得到，讓總覽表格可以縮小到一個人，資訊不會全部擠在一起。
+function populateOverviewStaffFilter(){
+  const sel = document.getElementById("ov-staff-filter");
+  const field = document.getElementById("ov-staff-filter-field");
+  if(!sel || !field) return;
+  if(!isAdmin()){ field.style.display = "none"; return; }
+  field.style.display = "block";
+  const prev = sel.value;
+  sel.innerHTML = `<option value="__all__">全部夥伴</option>` + STAFF.map(s=>`<option value="${s}">${s}</option>`).join("");
+  sel.value = Array.from(sel.options).some(o=>o.value===prev) ? prev : "__all__";
+}
+
 function renderOverview(){
   const period = document.getElementById("ov-period").value;
   const el = document.getElementById("ov-table");
@@ -2941,6 +2957,7 @@ function renderOverview(){
   renderLearnedPanel();
   renderDeadlineAdminCards();
   renderSettingsExportCard();
+  populateOverviewStaffFilter();
   const dataMergeCard = document.getElementById("ov-datamerge-card");
   dataMergeCard.style.display = isAdmin() ? "block" : "none";
 
@@ -2991,13 +3008,17 @@ function renderOverview(){
     return;
   }
 
+  const staffFilter = document.getElementById("ov-staff-filter").value || "__all__";
   const data = loadData();
   const records = Object.values(data)
     .filter(r=>r.period===period)
+    .filter(r=> staffFilter==="__all__" || r.staff===staffFilter)
     .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position) || a.staff.localeCompare(b.staff));
 
   if(records.length===0){
-    el.innerHTML = `<p class="helptext">此期間尚無任何評分資料。請先在「考官評分」或「個人自評」分頁輸入，或匯入已收到的 JSON 檔案。</p>`;
+    el.innerHTML = staffFilter==="__all__"
+      ? `<p class="helptext">此期間尚無任何評分資料。請先在「考官評分」或「個人自評」分頁輸入，或匯入已收到的 JSON 檔案。</p>`
+      : `<p class="helptext">「${staffFilter}」在此期間目前還沒有任何評分資料。</p>`;
     return;
   }
 
@@ -3120,6 +3141,7 @@ document.getElementById("tabnav").addEventListener("click", (e)=>{
   if(btn.dataset.tab === "election"){ renderVoteResults(); renderQuarterSummary(); }
 });
 document.getElementById("ov-period").addEventListener("change", renderOverview);
+document.getElementById("ov-staff-filter").addEventListener("change", renderOverview);
 
 /* ========== 初始化 ========== */
 ensureDefaultPins();
