@@ -587,7 +587,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-28-23";
+const APP_VERSION = "2026-07-29-25";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -966,14 +966,37 @@ function nl2br(str){
 function weighted(scores){
   return ITEMS.reduce((sum, item)=> sum + (Number(scores[item.key])||0) * item.weight, 0);
 }
+// 判斷這個人自己是不是「這個崗位」目前已公布、當選的考官（用來決定要不要把他的自評頂替成他自己那一席考官分數）。
+function isElectedExaminerForPosition(staffName, period, position){
+  const quarter = quarterForExamining(period, position);
+  if(!quarter || !isPublished(quarter)) return false;
+  return winnersFor(quarter, position).includes(staffName);
+}
 function examinerAverage(record){
   const names = Object.keys(record.examiners || {});
   const filled = names
     .map(n=>record.examiners[n])
     .filter(e=> e && ITEMS.every(it=> e[it.key] != null && e[it.key] !== ""));
-  if(filled.length === 0) return null;
-  const total = filled.reduce((sum,e)=> sum + weighted(e), 0);
-  return {value: total/filled.length, count: filled.length};
+  const values = filled.map(e=>weighted(e));
+  // 如果被評分的人自己就是這個崗位的當選考官，他自己那一席考官永遠不可能由自己填（系統擋著不能評自己），
+  // 這裡改用他自己的自評分數頂替那一席，跟其他考官分數一起算進平均，最多會湊到跟這個崗位當選考官人數一樣多
+  // （接待2位、其他崗位3位）；如果他不是這個崗位的考官、或自評還沒填，完全不受影響，維持原本算法。
+  let selfCountedAsExaminer = false;
+  if(isElectedExaminerForPosition(record.staff, record.period, record.position)){
+    const self = selfWeighted(record);
+    if(self != null){
+      values.push(self);
+      selfCountedAsExaminer = true;
+    }
+  }
+  if(values.length === 0) return null;
+  // 不管實際有幾位考官交出分數，一律除以「這個崗位應該要有」的考官人數（接待2位、其他崗位3位）；
+  // 沒交出分數的考官等於在總分裡貢獻0分，讓考官沒準時填寫的影響直接反映在被評分的夥伴分數上，
+  // 不會因為少一位考官沒填、分母跟著縮小而被自動忽略掉。至少要湊到1個數值（自己的自評或真人考官）
+  // 才會有平均可算，完全沒人填的狀態仍然是「尚無考官」，不會提早生出0分。
+  const denom = winnerCount(record.position);
+  const total = values.reduce((sum,v)=> sum+v, 0);
+  return {value: total/denom, count: values.length, realCount: filled.length, selfCountedAsExaminer, denom};
 }
 function selfWeighted(record){
   if(!record.self || !ITEMS.every(it=> record.self[it.key] != null && record.self[it.key] !== "")) return null;
@@ -985,10 +1008,17 @@ function finalResult(record){
   if(!exAvg && self==null) return {score:null, grade:null, status:"尚無資料"};
   if(exAvg && self!=null){
     const score = exAvg.value*0.7 + self*0.3;
-    return {score, grade: gradeOf(score), status:`考官${exAvg.count}位・自評已填`};
+    const filledLabel = exAvg.selfCountedAsExaminer
+      ? `已填${exAvg.realCount}位（+本人自評頂替第${exAvg.denom}位考官）`
+      : `已填${exAvg.realCount}位`;
+    const missing = exAvg.denom - exAvg.count;
+    const missingLabel = missing > 0 ? `，尚有${missing}位考官未填（以0分計入總分）` : "";
+    return {score, grade: gradeOf(score), status:`考官${filledLabel}／應有${exAvg.denom}位${missingLabel}・自評已填`};
   }
   if(exAvg && self==null){
-    return {score:null, grade:null, status:`考官${exAvg.count}位・尚缺自評`};
+    const missing = exAvg.denom - exAvg.count;
+    const missingLabel = missing > 0 ? `，尚有${missing}位考官未填（以0分計入總分）` : "";
+    return {score:null, grade:null, status:`考官已填${exAvg.realCount}位／應有${exAvg.denom}位${missingLabel}・尚缺自評`};
   }
   return {score:null, grade:null, status:`尚無考官・僅自評`};
 }
@@ -2876,10 +2906,14 @@ function exportCSV(){
     const grade = effectiveGrade(r);
     const bonusInfo = effectiveBonus(r, grade);
     const ov = r.override || {};
-    const detail = Object.keys(r.examiners||{}).map(n=>{
+    const detailParts = Object.keys(r.examiners||{}).map(n=>{
       const e = r.examiners[n];
       return `${n}:${e.collab}/${e.efficiency}/${e.quality}→${weighted(e).toFixed(2)}`;
-    }).join("; ");
+    });
+    if(exAvg && exAvg.selfCountedAsExaminer){
+      detailParts.push(`(本人自評頂替第${winnerCount(r.position)}位考官:${self.toFixed(2)})`);
+    }
+    const detail = detailParts.join("; ");
     const rawNotes = Object.keys(r.examiners||{}).map(n=>{
       const e = r.examiners[n];
       return e.note ? `${n}:${e.note}` : "";
@@ -3030,13 +3064,15 @@ function renderOverview(){
     const bonusInfo = effectiveBonus(r, grade);
     const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "—";
     const names = Object.keys(r.examiners||{});
-    const examinerDetail = names.length
-      ? names.map(n=>{
-          const e = r.examiners[n];
-          const noteLine = e.note ? `<br><span class="helptext">💬 ${nl2br(e.note)}</span>` : "";
-          return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}）${noteLine}`;
-        }).join("<br>")
-      : "—";
+    const examinerLines = names.map(n=>{
+      const e = r.examiners[n];
+      const noteLine = e.note ? `<br><span class="helptext">💬 ${nl2br(e.note)}</span>` : "";
+      return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}）${noteLine}`;
+    });
+    if(exAvg && exAvg.selfCountedAsExaminer){
+      examinerLines.push(`<span class="status">（本人自評頂替第${winnerCount(r.position)}位考官：加權${self.toFixed(2)}）</span>`);
+    }
+    const examinerDetail = examinerLines.length ? examinerLines.join("<br>") : "—";
     const selfDetail = r.self
       ? `協${r.self.collab} 效${r.self.efficiency} 品${r.self.quality}<br>（加權${self.toFixed(2)}）`
       : "—";
