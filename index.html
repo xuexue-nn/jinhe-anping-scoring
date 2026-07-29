@@ -108,6 +108,14 @@
   .deadline-banner.info{background:var(--abg);color:var(--accent-dark);border-color:var(--accent);}
   .deadline-banner.urgent{background:var(--bbg);color:var(--b);border-color:var(--b);}
   .deadline-banner.locked{background:var(--cbg);color:var(--c);border-color:var(--c);}
+
+  /* ---- 夥伴預覽模式橫幅 ---- */
+  #preview-banner{display:none;background:var(--abg);color:var(--accent-dark);padding:10px 16px;font-size:13px;text-align:center;border-bottom:2px solid var(--accent);line-height:1.7;}
+  #preview-banner.show{display:block;}
+  #preview-banner button{margin-left:10px;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:12.5px;font-weight:700;cursor:pointer;}
+  .preview-picker{display:none;align-items:center;gap:6px;}
+  .preview-picker.show{display:inline-flex;}
+  .preview-picker select{padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.35);background:#fff;font-size:13px;}
 </style>
 </head>
 <body>
@@ -117,6 +125,12 @@
   <span id="version-banner-text">系統偵測到你這台裝置的版本比較舊，請重新整理頁面更新（如果重新整理後還是這個訊息，代表你開啟的不是管理員提供的最新網址，請跟管理員確認）。</span>
   <button onclick="location.reload()">重新整理</button>
   <button class="link2" onclick="hideVersionBanner()">先關閉</button>
+</div>
+
+<!-- ================= 夥伴預覽模式提醒 ================= -->
+<div id="preview-banner">
+  🔍 目前是「夥伴預覽模式」，畫面上顯示的就是「<b id="preview-banner-name">—</b>」實際登入會看到的樣子；在這裡填寫、儲存或送出的內容<b>不會真的存檔或上傳</b>，離開預覽或重新整理頁面就會全部消失。
+  <button onclick="exitPreviewMode()">結束預覽，返回管理員</button>
 </div>
 
 <!-- ================= 登入畫面 ================= -->
@@ -155,6 +169,12 @@
   </div>
   <div class="whoami">
     目前登入：<b id="whoami-name">—</b>
+    <span class="preview-picker" id="preview-picker-wrap">
+      <select id="preview-picker-select"></select>
+      <button onclick="confirmEnterPreview()">開始預覽</button>
+      <button onclick="togglePreviewPicker()">取消</button>
+    </span>
+    <button id="preview-toggle-btn" style="display:none;" onclick="togglePreviewPicker()">夥伴預覽模式</button>
     <button onclick="toggleChangePinPanel()">修改密碼</button>
     <button onclick="doLogout()">登出 / 換人</button>
   </div>
@@ -587,7 +607,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-29-26";
+const APP_VERSION = "2026-07-29-27";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -670,7 +690,62 @@ const SESSION_KEY = "jinheAnping_current_login_v1";
 const ADMIN_NAME = "NN";
 
 let currentUser = null;
-function isAdmin(){ return currentUser === ADMIN_NAME; }
+
+/* ========== 夥伴預覽模式 ==========
+   讓管理員不用真的登出、也不用知道夥伴密碼，就能直接切換畫面看夥伴會看到什麼樣子。
+   預覽期間 currentUser 會暫時換成被預覽的那個人，isAdmin() 會回傳false，所有畫面上原本
+   「一般夥伴看不到/用不了」的地方會自動照舊隱藏，不用另外寫判斷式。
+   關鍵是「不留紀錄」：預覽期間所有的考官評分/自評/投票資料一律讀寫這份記憶體暫存（見下方
+   previewShadowData/previewShadowVotes），完全不碰真正的 localStorage，也不會呼叫雲端同步；
+   離開預覽或重新整理頁面，暫存資料就整個消失，不會留下任何痕跡。 */
+let previewMode = false;
+let previewRealUser = null;
+let previewShadowData = null;
+let previewShadowVotes = null;
+
+function isAdmin(){ return !previewMode && currentUser === ADMIN_NAME; }
+
+function togglePreviewPicker(){
+  if(!isAdmin()) return;
+  const wrap = document.getElementById("preview-picker-wrap");
+  const showing = wrap.classList.contains("show");
+  if(showing){ wrap.classList.remove("show"); return; }
+  const sel = document.getElementById("preview-picker-select");
+  sel.innerHTML = STAFF.filter(n=>n!==ADMIN_NAME).map(n=>`<option value="${n}">${n}</option>`).join("");
+  wrap.classList.add("show");
+}
+
+function confirmEnterPreview(){
+  if(!isAdmin()) return;
+  const name = document.getElementById("preview-picker-select").value;
+  if(!name) return;
+  document.getElementById("preview-picker-wrap").classList.remove("show");
+  enterPreviewMode(name);
+}
+
+function enterPreviewMode(name){
+  if(!isAdmin() || !name) return;
+  previewRealUser = currentUser;
+  // 複製一份「目前真實資料」讓預覽畫面看起來跟平常一樣有資料可看；接下來的異動只會停留在這份複本上。
+  previewShadowData = JSON.parse(JSON.stringify(loadData()));
+  previewShadowVotes = JSON.parse(JSON.stringify(loadVotes()));
+  previewMode = true;
+  currentUser = name;
+  document.getElementById("preview-banner-name").textContent = name;
+  document.getElementById("preview-banner").classList.add("show");
+  enterApp();
+}
+
+function exitPreviewMode(){
+  if(!previewMode) return;
+  currentUser = previewRealUser;
+  previewMode = false;
+  previewRealUser = null;
+  previewShadowData = null;
+  previewShadowVotes = null;
+  document.getElementById("preview-banner").classList.remove("show");
+  enterApp();
+}
 
 /* ========== 簡易密碼雜湊（僅作為同事互相辨識用，非高強度加密） ========== */
 function simpleHash(str){
@@ -868,6 +943,12 @@ async function doLogin(){
 function doLogout(){
   localStorage.removeItem(SESSION_KEY);
   currentUser = null;
+  // 不管是不是在預覽模式中登出，一律把預覽狀態整個重設乾淨，避免下次登入時殘留舊的預覽暫存。
+  previewMode = false;
+  previewRealUser = null;
+  previewShadowData = null;
+  previewShadowVotes = null;
+  document.getElementById("preview-banner").classList.remove("show");
   document.getElementById("login-overlay").classList.remove("hidden");
   document.getElementById("login-pin").value = "";
   document.getElementById("changepin-panel").style.display = "none";
@@ -887,6 +968,7 @@ function toggleChangePinPanel(){
 }
 function changeMyPin(){
   if(!currentUser){ return; }
+  if(previewMode){ showMsg("changepin-msg","warn","目前是夥伴預覽模式，無法真的修改密碼，請先「結束預覽」再操作。"); return; }
   const p1 = document.getElementById("changepin-new").value.trim();
   const p2 = document.getElementById("changepin-confirm").value.trim();
   if(!/^\d{4}$/.test(p1)){ showMsg("changepin-msg","warn","密碼必須是4位數字"); return; }
@@ -911,10 +993,14 @@ function togglePasswordVisibility(inputId, btnEl){
 
 function enterApp(){
   document.getElementById("login-overlay").classList.add("hidden");
-  document.getElementById("whoami-name").textContent = currentUser;
+  document.getElementById("whoami-name").textContent = currentUser + (previewMode ? "（預覽中）" : "");
   document.getElementById("ex-name-display").textContent = currentUser;
   document.getElementById("sf-name-display").textContent = currentUser;
   document.getElementById("el-voter-display").textContent = currentUser;
+  const previewBtn = document.getElementById("preview-toggle-btn");
+  if(previewBtn) previewBtn.style.display = isAdmin() ? "inline-block" : "none";
+  const previewWrap = document.getElementById("preview-picker-wrap");
+  if(previewWrap) previewWrap.classList.remove("show");
   renderExPositionOptions();
   renderSfPositionOptions();
   renderExStaffButtons();
@@ -930,10 +1016,12 @@ function enterApp(){
 
 /* ========== 資料存取 ========== */
 function loadData(){
+  if(previewMode) return previewShadowData || {};
   try{ return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
   catch(e){ return {}; }
 }
 function saveData(data){
+  if(previewMode){ previewShadowData = data; return; } // 預覽模式：只改記憶體裡的複本，不寫回真正的資料庫
   localStorage.setItem(STORE_KEY, JSON.stringify(data));
 }
 function recordKey(period, position, staff){
@@ -1562,6 +1650,7 @@ async function pullPinsFromCloud(){
 // 如果NN已經設定好同步網址，就在背景把「自己剛剛這一筆」上傳雲端；
 // 不需要密碼、不會彈窗打擾、離線或上傳失敗也完全不影響本機已經存好的資料。
 async function pushSubmissionToCloud(payload){
+  if(previewMode) return; // 預覽模式完全不連網送出，不會留下任何雲端紀錄
   const url = loadSyncUrl();
   if(!url) return;
   try{
@@ -2312,10 +2401,14 @@ function loadExistingSelfScoreIntoForm(){
 
 /* ========== 考官選舉：資料存取 ========== */
 function loadVotes(){
+  if(previewMode) return previewShadowVotes || {};
   try{ return JSON.parse(localStorage.getItem(VOTE_KEY)) || {}; }
   catch(e){ return {}; }
 }
-function saveVotes(votes){ localStorage.setItem(VOTE_KEY, JSON.stringify(votes)); }
+function saveVotes(votes){
+  if(previewMode){ previewShadowVotes = votes; return; } // 預覽模式：只改記憶體裡的複本，不寫回真正的投票資料
+  localStorage.setItem(VOTE_KEY, JSON.stringify(votes));
+}
 function voteRecordKey(quarter, position){ return quarter + "|" + position; }
 function getOrCreateVoteRecord(votes, quarter, position){
   const k = voteRecordKey(quarter, position);
