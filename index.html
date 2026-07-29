@@ -587,7 +587,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-29-25";
+const APP_VERSION = "2026-07-29-26";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -972,8 +972,17 @@ function isElectedExaminerForPosition(staffName, period, position){
   if(!quarter || !isPublished(quarter)) return false;
   return winnersFor(quarter, position).includes(staffName);
 }
+// 這個崗位「目前」真正當選的考官名單（用來把舊資料/測試資料裡，不是當選考官卻留下評分紀錄的人排除在平均之外）。
+// 跟 saveExaminer() 送出時的規則一致：查不到當選名單（例如尚未公布）時不過濾，避免誤刪還沒有結果可比對的正常資料。
+function currentWinnerNamesFor(period, position){
+  const quarter = quarterForExamining(period, position);
+  if(!quarter || !isPublished(quarter)) return [];
+  return winnersFor(quarter, position);
+}
 function examinerAverage(record){
-  const names = Object.keys(record.examiners || {});
+  const winners = currentWinnerNamesFor(record.period, record.position);
+  const names = Object.keys(record.examiners || {})
+    .filter(n => winners.length === 0 || winners.includes(n)); // 排除不是目前當選考官的殘留紀錄（例如舊測試資料）
   const filled = names
     .map(n=>record.examiners[n])
     .filter(e=> e && ITEMS.every(it=> e[it.key] != null && e[it.key] !== ""));
@@ -1793,6 +1802,18 @@ function updateOverrideScore(period, position, staff, value){
 }
 // 夥伴看得到的「考官建議」：一律匿名（不帶考官姓名），由NN彙整/修飾/刪改後存這裡，
 // 存了才會顯示給本人，NN沒填就維持不顯示。
+// 僅管理員可用：從「評分總覽」直接刪掉某一筆考官評分紀錄（例如舊測試資料，或考官已經不是這個崗位的當選考官）。
+// 只會刪除這一位考官對這一位夥伴、這個崗位、這個月份的紀錄，不影響其他人的資料。
+function adminDeleteExaminerEntry(period, position, staff, examinerName){
+  if(!isAdmin()) return;
+  if(!confirm(`確定要刪除「${examinerName}」對「${staff}／${position}／${period}」的考官評分紀錄嗎？此動作無法復原。`)) return;
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  if(!record || !record.examiners || !record.examiners[examinerName]) return;
+  delete record.examiners[examinerName];
+  saveData(data);
+  renderOverview();
+}
 function updateOverrideNote(period, position, staff, value){
   const data = loadData();
   const record = data[recordKey(period, position, staff)];
@@ -2906,9 +2927,11 @@ function exportCSV(){
     const grade = effectiveGrade(r);
     const bonusInfo = effectiveBonus(r, grade);
     const ov = r.override || {};
+    const rowWinners = currentWinnerNamesFor(r.period, r.position);
     const detailParts = Object.keys(r.examiners||{}).map(n=>{
       const e = r.examiners[n];
-      return `${n}:${e.collab}/${e.efficiency}/${e.quality}→${weighted(e).toFixed(2)}`;
+      const excluded = rowWinners.length > 0 && !rowWinners.includes(n);
+      return `${n}:${e.collab}/${e.efficiency}/${e.quality}→${weighted(e).toFixed(2)}${excluded ? "(非當前當選考官，不計入平均)" : ""}`;
     });
     if(exAvg && exAvg.selfCountedAsExaminer){
       detailParts.push(`(本人自評頂替第${winnerCount(r.position)}位考官:${self.toFixed(2)})`);
@@ -3064,10 +3087,16 @@ function renderOverview(){
     const bonusInfo = effectiveBonus(r, grade);
     const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "—";
     const names = Object.keys(r.examiners||{});
+    const rowWinners = currentWinnerNamesFor(r.period, r.position);
     const examinerLines = names.map(n=>{
       const e = r.examiners[n];
       const noteLine = e.note ? `<br><span class="helptext">💬 ${nl2br(e.note)}</span>` : "";
-      return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}）${noteLine}`;
+      const excluded = rowWinners.length > 0 && !rowWinners.includes(n);
+      const safeN = n.replace(/'/g,"\\'");
+      const excludedLine = excluded
+        ? `<br><span class="status">（非目前當選考官，不計入平均——可能是舊資料或測試資料）</span> <button type="button" class="danger" style="font-size:11px;padding:1px 6px;" onclick="adminDeleteExaminerEntry('${r.period}','${r.position}','${r.staff.replace(/'/g,"\\'")}','${safeN}')">刪除這筆</button>`
+        : "";
+      return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}）${noteLine}${excludedLine}`;
     });
     if(exAvg && exAvg.selfCountedAsExaminer){
       examinerLines.push(`<span class="status">（本人自評頂替第${winnerCount(r.position)}位考官：加權${self.toFixed(2)}）</span>`);
