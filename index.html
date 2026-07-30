@@ -374,11 +374,13 @@
           <select id="ov-staff-filter"></select>
         </div>
       </div>
+      <div id="ov-summary-table"></div>
+      <p class="helptext" id="ov-detail-hint" style="margin-top:10px;"></p>
       <div id="ov-table"></div>
       <p class="foot-note" id="ov-formula-note">
         計算方式：每位評分人分數 = 協作與溝通×40% + 工作效能與自主能力×30% + 成果品質×30%（各項1–10分）。<br>
         考官平均 = 已填寫考官加權分數之平均；總分 = 考官平均×70% + 個人自評×30%。<br>
-        評級：總分 &gt; 8.999 → S　／　總分 &gt; 7.999 → A　／　總分 &gt; 6 → B　／　總分 ≤ 6 → C。<br>
+        評級：總分 &gt; 8.999 → S　／　總分 &gt; 7.999 → A　／　總分 &gt; 6 → B　／　總分 ≤ 6 → C（吧台、接待這兩個崗位的S級門檻較高，總分需 &gt; 9.35 才是S）。<br>
         評級與加給金額需等管理員公布本月結果後才會顯示。
       </p>
     </div>
@@ -607,7 +609,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-29-27";
+const APP_VERSION = "2026-07-29-28";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -1110,7 +1112,7 @@ function finalResult(record){
       : `已填${exAvg.realCount}位`;
     const missing = exAvg.denom - exAvg.count;
     const missingLabel = missing > 0 ? `，尚有${missing}位考官未填（以0分計入總分）` : "";
-    return {score, grade: gradeOf(score), status:`考官${filledLabel}／應有${exAvg.denom}位${missingLabel}・自評已填`};
+    return {score, grade: gradeOf(score, record.position), status:`考官${filledLabel}／應有${exAvg.denom}位${missingLabel}・自評已填`};
   }
   if(exAvg && self==null){
     const missing = exAvg.denom - exAvg.count;
@@ -1119,8 +1121,10 @@ function finalResult(record){
   }
   return {score:null, grade:null, status:`尚無考官・僅自評`};
 }
-function gradeOf(score){
-  if(score > 8.999) return "S";
+// 吧台、接待這兩個崗位的S級門檻比較高（9.35以上才是S），其他崗位維持原本門檻；A/B/C門檻不變。
+function gradeOf(score, position){
+  const sThreshold = (position === "吧台" || position === "接待") ? 9.349 : 8.999;
+  if(score > sThreshold) return "S";
   if(score > 7.999) return "A";
   if(score > 6) return "B";
   return "C";
@@ -1130,7 +1134,7 @@ function gradeOf(score){
 function effectiveGrade(record){
   const ov = record.override;
   if(ov && ov.grade) return ov.grade;
-  if(ov && ov.score != null) return gradeOf(ov.score);
+  if(ov && ov.score != null) return gradeOf(ov.score, record.position);
   return finalResult(record).grade;
 }
 function effectiveScore(record){
@@ -3093,8 +3097,45 @@ function populateOverviewStaffFilter(){
   if(!isAdmin()){ field.style.display = "none"; return; }
   field.style.display = "block";
   const prev = sel.value;
-  sel.innerHTML = `<option value="__all__">全部夥伴</option>` + STAFF.map(s=>`<option value="${s}">${s}</option>`).join("");
-  sel.value = Array.from(sel.options).some(o=>o.value===prev) ? prev : "__all__";
+  sel.innerHTML = `<option value="">請選擇夥伴查看詳細評分</option><option value="__all__">全部夥伴（詳細總表）</option>` + STAFF.map(s=>`<option value="${s}">${s}</option>`).join("");
+  // 預設是空白「請選擇」，避免一打開就跳出一大整張表；只有使用者自己選過的值才會被保留下來。
+  sel.value = Array.from(sel.options).some(o=>o.value===prev) ? prev : "";
+}
+
+// 簡易的「評級與崗位加給一覽」：只列崗位/姓名/評級/加給金額，不含考官逐筆明細，方便快速掃過整體結果。
+// 不受「請選擇夥伴」限制，一直都會顯示（可選夥伴進一步縮小範圍），跟下面的詳細總表分開。
+function renderOverviewSummaryTable(period, staffFilter){
+  const el = document.getElementById("ov-summary-table");
+  if(!el) return;
+  const data = loadData();
+  const records = Object.values(data)
+    .filter(r=>r.period===period)
+    .filter(r=> !staffFilter || staffFilter==="__all__" || r.staff===staffFilter)
+    .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position) || a.staff.localeCompare(b.staff));
+
+  if(records.length===0){
+    el.innerHTML = `<p class="helptext">此期間尚無任何評分資料。</p>`;
+    return;
+  }
+
+  const rows = records.map(r=>{
+    const grade = effectiveGrade(r);
+    const bonusInfo = effectiveBonus(r, grade);
+    const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "—";
+    return `<tr>
+      <td class="left">${r.position}</td>
+      <td class="left">${r.staff}${isPartTime(r.staff) ? ' <span class="status">(兼職)</span>' : ""}</td>
+      <td>${gradeHtml}</td>
+      <td>${grade ? bonusInfo.label : "—"}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <table>
+      <tr><th class="left">崗位</th><th class="left">姓名</th><th>評級</th><th>崗位加給</th></tr>
+      ${rows}
+    </table>
+  `;
 }
 
 function renderOverview(){
@@ -3111,7 +3152,12 @@ function renderOverview(){
   const dataMergeCard = document.getElementById("ov-datamerge-card");
   dataMergeCard.style.display = isAdmin() ? "block" : "none";
 
+  const summaryEl = document.getElementById("ov-summary-table");
+  const hintEl = document.getElementById("ov-detail-hint");
+
   if(!isAdmin()){
+    if(summaryEl) summaryEl.innerHTML = "";
+    if(hintEl) hintEl.textContent = "";
     if(!isScorePublished(period)){
       el.innerHTML = `<p class="helptext">本月（${period}）的評分結果尚未公布，請耐心等候管理員公告。</p>`;
       return;
@@ -3158,7 +3204,18 @@ function renderOverview(){
     return;
   }
 
-  const staffFilter = document.getElementById("ov-staff-filter").value || "__all__";
+  const staffFilter = document.getElementById("ov-staff-filter").value; // 預設是空字串（請選擇），不是 __all__
+
+  // 評級／崗位加給一覽：不管有沒有選夥伴都會顯示，方便快速看整體結果，不用先選人。
+  renderOverviewSummaryTable(period, staffFilter);
+
+  if(staffFilter === ""){
+    if(hintEl) hintEl.textContent = "上方是所有夥伴的評級與崗位加給一覽；如果需要看考官逐筆分數明細、備註、或手動調整評級／加給，請在「只看這位夥伴」選一位夥伴（或選「全部夥伴（詳細總表）」）。";
+    el.innerHTML = "";
+    return;
+  }
+  if(hintEl) hintEl.textContent = "";
+
   const data = loadData();
   const records = Object.values(data)
     .filter(r=>r.period===period)
@@ -3280,9 +3337,9 @@ function renderStandard(){
   document.getElementById("standard-full").innerHTML = html + `
     <p class="foot-note">
       各項評分為 1–10 分整數。單一評分人（考官或自評者）之加權分數 = 協作與溝通×40% + 工作效能與自主能力×30% + 成果品質×30%。<br>
-      考官平均 = 已填寫的考官（最多3位）加權分數之平均值。<br>
+      考官平均 = 加權分數總和 ÷ 這個崗位應有的當選考官人數（接待2位、其他崗位3位）；沒有交出分數的考官等同貢獻0分，不會因為少人填就縮小分母。若被評分的人自己也是這個崗位的當選考官，他自己那一席會用他的自評分數頂替（因此自評分數可能被計入兩次）。<br>
       總分 = 考官平均 × 70% + 個人自評 × 30%（須考官與自評皆有資料才會產生總分與評級）。<br>
-      評級門檻：總分 &gt; 8.999 → <b>S</b>　／　總分 &gt; 7.999 → <b>A</b>　／　其餘 → <b>B</b>。
+      評級門檻：總分 &gt; 8.999 → <b>S</b>　／　總分 &gt; 7.999 → <b>A</b>　／　總分 &gt; 6 → <b>B</b>　／　總分 ≤ 6 → <b>C</b>（吧台、接待兩崗位S級門檻較高，需總分 &gt; 9.35）。
     </p>
   `;
 }
