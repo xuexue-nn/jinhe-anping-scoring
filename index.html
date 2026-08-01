@@ -385,6 +385,15 @@
       </p>
     </div>
 
+    <div class="card" id="ov-bonus-totals-card" style="display:none;">
+      <h2>崗位加給總額一覽（薪資明細用，僅管理員可見）</h2>
+      <p class="helptext">依夥伴姓名加總「這個月」所有崗位的加給金額（同一人若身兼多崗位，會自動加總），方便直接對照做薪資明細；不受夥伴端「結果是否已公布」影響，NN 隨時都看得到目前的加總。</p>
+      <div id="ov-bonus-totals"></div>
+      <div class="btnrow" style="margin-top:10px;">
+        <button class="ghost" onclick="exportBonusTotalsCSV()">匯出加給總額（CSV，適合貼到薪資表）</button>
+      </div>
+    </div>
+
     <div class="card" id="ov-admin-card" style="display:none;">
       <h2>本月成績管理（僅管理員可見）</h2>
       <p class="helptext" id="ov-admin-status"></p>
@@ -609,7 +618,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-30";
+const APP_VERSION = "2026-08-01-32";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -677,6 +686,7 @@ const VOTE_KEY = "jinheAnping_election_votes_v1";
 const PUBLISH_KEY = "jinheAnping_election_published_v1";
 const SCORE_PUBLISH_KEY = "jinheAnping_score_published_v1";
 const PUBLISHED_RESULTS_KEY = "jinheAnping_published_results_v1";
+const PUBLISHED_SCORE_RESULTS_KEY = "jinheAnping_published_score_results_v1";
 const STAFF_TYPE_KEY = "jinheAnping_staff_type_v1";
 const HOURS_KEY = "jinheAnping_parttime_hours_v1";
 const LEARNED_KEY = "jinheAnping_learned_positions_v1";
@@ -1484,6 +1494,7 @@ function exportSettingsJSON(){
     publish: loadPublish(),
     scorePublish: loadScorePublish(),
     publishedResults: loadPublishedResults(),
+    publishedScoreResults: loadPublishedScoreResults(),
     appVersion: APP_VERSION,
     ts: Date.now()
   };
@@ -1514,6 +1525,7 @@ function importSettingsFile(){
       if(obj.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(obj.publish));
       if(obj.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(obj.scorePublish));
       if(obj.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(obj.publishedResults));
+      if(obj.publishedScoreResults) localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(obj.publishedScoreResults));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
       renderExPositionOptions();
       renderSfPositionOptions();
@@ -1557,6 +1569,7 @@ function applyCloudSettings(data){
   if(data.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(data.publish));
   if(data.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(data.scorePublish));
   if(data.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(data.publishedResults));
+  if(data.publishedScoreResults) localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(data.publishedScoreResults));
   renderExPositionOptions();
   renderSfPositionOptions();
   renderExStaffButtons();
@@ -1703,6 +1716,10 @@ async function pushSettingsToCloud(){
   // 每次同步到雲端，都用這台裝置目前（收集過後）本機的票數重新整理一次已公布結果快照，
   // 確保夥伴那邊拿到的是最新結果，不用另外再按一次「公布」才會更新。
   refreshPublishedResultsSnapshot();
+  // 評分結果（評級/加給/建議）也是同樣道理：夥伴自己的裝置只有自己填的自評，沒有考官給的分數，
+  // 沒辦法自己算出最終評級，所以NN這台裝置（資料最齊全）每次同步時都重新整理一份不含考官身份、
+  // 只留「崗位/評級/加給/公布備註」的快照一起送出去，夥伴裝置改讀這份快照即可看到自己的結果。
+  refreshPublishedScoreResultsSnapshot();
 
   const payload = {
     type: "settings",
@@ -1719,6 +1736,7 @@ async function pushSettingsToCloud(){
     publish: loadPublish(),
     scorePublish: loadScorePublish(),
     publishedResults: loadPublishedResults(),
+    publishedScoreResults: loadPublishedScoreResults(),
     appVersion: APP_VERSION
   };
   statusEl.textContent = "同步中…";
@@ -1845,6 +1863,7 @@ function toggleScorePublish(){
   const pub = loadScorePublish();
   pub[period] = !pub[period];
   saveScorePublish(pub);
+  refreshPublishedScoreResultsSnapshot();
   renderScoreAdminPanel();
   renderOverview();
 }
@@ -2726,6 +2745,52 @@ function refreshPublishedResultsSnapshot(){
   savePublishedResults(snap);
 }
 
+/* ========== 已公布評分結果快照（跟上面投票結果快照同樣道理） ==========
+   夥伴自己的裝置上，只有自己填的自評，沒有考官給的分數（考官原始分數只有NN能用管理密碼收集），
+   所以夥伴裝置自己重新計算最終評級/加給一定算不出來（考官那一半永遠是空的）。
+   公布、或每次同步到雲端時，NN這台裝置（資料最齊全）會把目前算出來的結果整理成一份
+   「不含考官身份與原始分數」的快照（只留每位夥伴每個崗位的評級、加給、NN寫的公布備註），
+   存進公開的系統設定裡跟著同步出去，夥伴裝置改用這份快照顯示自己的結果。 */
+function loadPublishedScoreResults(){
+  try{ return JSON.parse(localStorage.getItem(PUBLISHED_SCORE_RESULTS_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function savePublishedScoreResults(obj){ localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(obj)); }
+
+// 用這台裝置目前本機的評分資料，整理出「這個月」每位夥伴的結果（只收錄已經產生評級的那幾筆）。
+function buildScoreResultSnapshotForPeriod(period){
+  const data = loadData();
+  const records = Object.values(data).filter(r=> r.period===period);
+  const byStaff = {};
+  records.forEach(r=>{
+    const grade = effectiveGrade(r);
+    if(!grade) return; // 考官或自評還沒填齊，尚未產生評級，不收錄
+    const bonusInfo = effectiveBonus(r, grade);
+    const note = (r.override && r.override.note && r.override.note.trim()) ? r.override.note.trim() : "";
+    if(!byStaff[r.staff]) byStaff[r.staff] = [];
+    byStaff[r.staff].push({
+      position: r.position,
+      grade,
+      bonusAmount: bonusInfo.amount,
+      bonusLabel: bonusInfo.label,
+      note
+    });
+  });
+  return byStaff;
+}
+
+// 用這台裝置目前本機的評分資料，重新整理出所有「目前已公布」月份的評分結果快照；
+// 只有管理員按公布/取消公布，或按同步到雲端時會呼叫，一般夥伴裝置不會呼叫這個。
+function refreshPublishedScoreResultsSnapshot(){
+  const pub = loadScorePublish();
+  const snap = {};
+  Object.keys(pub).forEach(period=>{
+    if(!pub[period]) return;
+    snap[period] = buildScoreResultSnapshotForPeriod(period);
+  });
+  savePublishedScoreResults(snap);
+}
+
 function renderAdminPanel(){
   const card = document.getElementById("el-admin-card");
   if(!isAdmin()){ card.style.display = "none"; return; }
@@ -3215,6 +3280,90 @@ function renderOverviewSummaryTable(period, staffFilter){
   `;
 }
 
+// 依夥伴姓名，把「這個月」名下所有崗位的加給金額加總（同一人身兼多崗位會自動加總）。
+// 名單以目前的夥伴名單（STAFF）為準，即使這個月完全沒有評分資料，也會列出、金額算0，
+// 避免做薪資明細時漏掉沒被評分到的人；兼職缺工時資料時金額算不出來，會用「待確認」標註、
+// 不會用0蒙混，也不會計入總額，避免少發或誤發。
+function computeBonusTotals(period){
+  const data = loadData();
+  const byStaff = Object.values(data)
+    .filter(r=> r.period===period)
+    .reduce((acc, r)=>{
+      (acc[r.staff] = acc[r.staff] || []).push(r);
+      return acc;
+    }, {});
+  return STAFF.map(name=>{
+    const records = (byStaff[name] || [])
+      .slice()
+      .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position));
+    let total = 0;
+    let incomplete = false;
+    const parts = records.map(r=>{
+      const grade = effectiveGrade(r);
+      if(!grade) return null; // 尚未產生評級（考官或自評還沒填齊），不計入，也不當作0元
+      const bonusInfo = effectiveBonus(r, grade);
+      if(bonusInfo.amount == null){
+        incomplete = true;
+        return `${r.position}:${grade}（待確認工時）`;
+      }
+      total += bonusInfo.amount;
+      return `${r.position}:${grade} NT$${bonusInfo.amount}`;
+    }).filter(Boolean);
+    return {
+      staff: name,
+      partTime: isPartTime(name),
+      detail: parts.length ? parts.join("、") : "—",
+      total,
+      incomplete
+    };
+  });
+}
+function renderBonusTotalsTable(period){
+  const el = document.getElementById("ov-bonus-totals");
+  if(!el) return;
+  const totals = computeBonusTotals(period);
+  const grandTotal = totals.reduce((sum,t)=> sum + t.total, 0);
+  const rows = totals.map(t=>`
+    <tr>
+      <td class="left">${t.staff}${t.partTime ? ' <span class="status">(兼職)</span>' : ""}</td>
+      <td class="left" style="font-size:12px;">${t.detail}</td>
+      <td><b>NT$ ${t.total}</b>${t.incomplete ? ' <span class="status">⚠️部分崗位待確認工時，未計入</span>' : ""}</td>
+    </tr>
+  `).join("");
+  el.innerHTML = `
+    <table>
+      <tr><th class="left">姓名</th><th class="left">崗位加給明細</th><th>加給總額</th></tr>
+      ${rows}
+      <tr><td class="left"><b>全部加總</b></td><td></td><td><b>NT$ ${grandTotal}</b></td></tr>
+    </table>
+    <p class="helptext">標示「⚠️待確認工時」的人，是兼職夥伴這個月工時資料還沒填，該崗位加給金額算不出來，暫不計入總額與全部加總，請到「人事設定」補上工時後再重新查看，避免少算。</p>
+  `;
+}
+function exportBonusTotalsCSV(){
+  if(!isAdmin()){ alert("僅管理員可以匯出"); return; }
+  const period = document.getElementById("ov-period").value;
+  const totals = computeBonusTotals(period);
+  const rows = [["姓名","雇用型態","崗位加給明細","加給總額(NT$)","備註"]];
+  totals.forEach(t=>{
+    rows.push([
+      t.staff,
+      t.partTime ? "兼職" : "正職",
+      t.detail,
+      t.total,
+      t.incomplete ? "部分崗位待確認工時，未計入總額" : ""
+    ]);
+  });
+  const grandTotal = totals.reduce((sum,t)=> sum + t.total, 0);
+  rows.push(["全部加總","","",grandTotal,""]);
+  const csv = rows.map(r=> r.map(v=> `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob(["﻿"+csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `今鶴安平外場崗位加給總額_${period}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function renderOverview(){
   const period = document.getElementById("ov-period").value;
   const el = document.getElementById("ov-table");
@@ -3228,6 +3377,9 @@ function renderOverview(){
   populateOverviewStaffFilter();
   const dataMergeCard = document.getElementById("ov-datamerge-card");
   dataMergeCard.style.display = isAdmin() ? "block" : "none";
+  const bonusTotalsCard = document.getElementById("ov-bonus-totals-card");
+  bonusTotalsCard.style.display = isAdmin() ? "block" : "none";
+  if(isAdmin()) renderBonusTotalsTable(period);
 
   const summaryEl = document.getElementById("ov-summary-table");
   const hintEl = document.getElementById("ov-detail-hint");
@@ -3239,37 +3391,72 @@ function renderOverview(){
       el.innerHTML = `<p class="helptext">本月（${period}）的評分結果尚未公布，請耐心等候管理員公告。</p>`;
       return;
     }
-    const data = loadData();
-    const myRecords = Object.values(data)
-      .filter(r=> r.period===period && r.staff===currentUser)
-      .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position));
-    if(myRecords.length===0){
-      el.innerHTML = `<p class="helptext">此期間尚無你的評分資料。</p>`;
-      return;
+
+    // 夥伴自己的裝置只有自己填的自評，沒有考官給的分數（考官在別的裝置填、只有NN能收集），
+    // 自己這台裝置永遠算不出完整結果——所以優先用NN同步下來的「已公布評分結果快照」顯示，
+    // 快照裡沒有這個月份（表示這台裝置的設定是舊版、或NN還沒同步過快照）才退回用本機資料試算。
+    const scoreSnap = loadPublishedScoreResults();
+    const hasSnapForPeriod = !!scoreSnap[period];
+    let rows, notesHtml;
+    if(hasSnapForPeriod){
+      const myResults = (scoreSnap[period][currentUser] || [])
+        .slice()
+        .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position));
+      if(myResults.length===0){
+        el.innerHTML = `<p class="helptext">此期間你目前還沒有已經產生的評級結果（可能是考官或自評還沒填齊，或管理員還沒同步最新結果），請稍等或詢問管理員。</p>`;
+        return;
+      }
+      rows = myResults.map(item=> `<tr>
+        <td class="left">${item.position}</td>
+        <td><span class="grade grade-${item.grade}">${item.grade}</span></td>
+        <td>${item.bonusLabel}</td>
+      </tr>`).join("");
+      const notedResults = myResults.filter(item=> item.note);
+      notesHtml = notedResults.length
+        ? `<div style="margin-top:14px;">
+            <h3 style="font-size:14px;margin-bottom:6px;">考官建議</h3>
+            ${notedResults.map(item=>`
+              <div class="card" style="margin-bottom:8px;padding:10px 12px;">
+                <div class="status" style="margin-bottom:4px;">${item.position}</div>
+                <div>${nl2br(item.note)}</div>
+              </div>
+            `).join("")}
+            <p class="helptext">以上為考官意見彙整，不會顯示是哪位考官所寫。</p>
+          </div>`
+        : "";
+    } else {
+      const data = loadData();
+      const myRecords = Object.values(data)
+        .filter(r=> r.period===period && r.staff===currentUser)
+        .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position));
+      if(myRecords.length===0){
+        el.innerHTML = `<p class="helptext">此期間尚無你的評分資料，也可能是這台裝置還沒同步到管理員最新的設定，請到「考官評分」分頁下方重新同步一次。</p>`;
+        return;
+      }
+      rows = myRecords.map(r=>{
+        const grade = effectiveGrade(r);
+        const bonusInfo = effectiveBonus(r, grade);
+        const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "尚未產生";
+        return `<tr>
+          <td class="left">${r.position}</td>
+          <td>${gradeHtml}</td>
+          <td>${grade ? bonusInfo.label : "—"}</td>
+        </tr>`;
+      }).join("");
+      const notedRecords = myRecords.filter(r=> r.override && r.override.note && r.override.note.trim());
+      notesHtml = notedRecords.length
+        ? `<div style="margin-top:14px;">
+            <h3 style="font-size:14px;margin-bottom:6px;">考官建議</h3>
+            ${notedRecords.map(r=>`
+              <div class="card" style="margin-bottom:8px;padding:10px 12px;">
+                <div class="status" style="margin-bottom:4px;">${r.position}</div>
+                <div>${nl2br(r.override.note)}</div>
+              </div>
+            `).join("")}
+            <p class="helptext">以上為考官意見彙整，不會顯示是哪位考官所寫。</p>
+          </div>`
+        : "";
     }
-    const rows = myRecords.map(r=>{
-      const grade = effectiveGrade(r);
-      const bonusInfo = effectiveBonus(r, grade);
-      const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "尚未產生";
-      return `<tr>
-        <td class="left">${r.position}</td>
-        <td>${gradeHtml}</td>
-        <td>${grade ? bonusInfo.label : "—"}</td>
-      </tr>`;
-    }).join("");
-    const notedRecords = myRecords.filter(r=> r.override && r.override.note && r.override.note.trim());
-    const notesHtml = notedRecords.length
-      ? `<div style="margin-top:14px;">
-          <h3 style="font-size:14px;margin-bottom:6px;">考官建議</h3>
-          ${notedRecords.map(r=>`
-            <div class="card" style="margin-bottom:8px;padding:10px 12px;">
-              <div class="status" style="margin-bottom:4px;">${r.position}</div>
-              <div>${nl2br(r.override.note)}</div>
-            </div>
-          `).join("")}
-          <p class="helptext">以上為考官意見彙整，不會顯示是哪位考官所寫。</p>
-        </div>`
-      : "";
     el.innerHTML = `
       <table>
         <tr><th class="left">崗位</th><th>評級</th><th>崗位加給</th></tr>
