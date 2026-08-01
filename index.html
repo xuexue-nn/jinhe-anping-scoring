@@ -618,7 +618,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-32";
+const APP_VERSION = "2026-08-01-33";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -3397,7 +3397,7 @@ function renderOverview(){
     // 快照裡沒有這個月份（表示這台裝置的設定是舊版、或NN還沒同步過快照）才退回用本機資料試算。
     const scoreSnap = loadPublishedScoreResults();
     const hasSnapForPeriod = !!scoreSnap[period];
-    let rows, notesHtml;
+    let rows, notesHtml, total = 0, incomplete = false;
     if(hasSnapForPeriod){
       const myResults = (scoreSnap[period][currentUser] || [])
         .slice()
@@ -3411,6 +3411,10 @@ function renderOverview(){
         <td><span class="grade grade-${item.grade}">${item.grade}</span></td>
         <td>${item.bonusLabel}</td>
       </tr>`).join("");
+      myResults.forEach(item=>{
+        if(item.bonusAmount == null){ incomplete = true; }
+        else { total += item.bonusAmount; }
+      });
       const notedResults = myResults.filter(item=> item.note);
       notesHtml = notedResults.length
         ? `<div style="margin-top:14px;">
@@ -3437,6 +3441,10 @@ function renderOverview(){
         const grade = effectiveGrade(r);
         const bonusInfo = effectiveBonus(r, grade);
         const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "尚未產生";
+        if(grade){
+          if(bonusInfo.amount == null){ incomplete = true; }
+          else { total += bonusInfo.amount; }
+        }
         return `<tr>
           <td class="left">${r.position}</td>
           <td>${gradeHtml}</td>
@@ -3461,6 +3469,7 @@ function renderOverview(){
       <table>
         <tr><th class="left">崗位</th><th>評級</th><th>崗位加給</th></tr>
         ${rows}
+        <tr><td class="left"><b>加給總額</b></td><td></td><td><b>NT$ ${total}</b>${incomplete ? ' <span class="status">⚠️部分崗位待確認工時，未計入</span>' : ""}</td></tr>
       </table>
       <p class="helptext">如對結果有疑問，請直接詢問管理員。</p>
       ${notesHtml}
