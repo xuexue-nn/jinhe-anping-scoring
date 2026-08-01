@@ -609,7 +609,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-07-29-29";
+const APP_VERSION = "2026-08-01-30";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -706,6 +706,11 @@ let previewShadowData = null;
 let previewShadowVotes = null;
 
 function isAdmin(){ return !previewMode && currentUser === ADMIN_NAME; }
+
+// 管理員在「評分總覽」直接修改某位夥伴填錯的分數（考官評分或自評）時，用這兩個變數記住目前正在編輯哪一筆，
+// 讓 renderOverview() 重繪時，該筆資料改成顯示可編輯的輸入框，其餘照舊。
+let editingExaminer = null; // {period, position, staff, examinerName}
+let editingSelf = null; // {period, position, staff}
 
 function togglePreviewPicker(){
   if(!isAdmin()) return;
@@ -950,6 +955,8 @@ function doLogout(){
   previewRealUser = null;
   previewShadowData = null;
   previewShadowVotes = null;
+  editingExaminer = null;
+  editingSelf = null;
   document.getElementById("preview-banner").classList.remove("show");
   document.getElementById("login-overlay").classList.remove("hidden");
   document.getElementById("login-pin").value = "";
@@ -1906,6 +1913,75 @@ function adminDeleteExaminerEntry(period, position, staff, examinerName){
   if(!record || !record.examiners || !record.examiners[examinerName]) return;
   delete record.examiners[examinerName];
   saveData(data);
+  renderOverview();
+}
+
+/* ---------- 管理員直接修改夥伴填錯的分數（考官評分／自評） ----------
+   用途：夥伴自己填寫時按錯、填反了，NN 幫忙修正，不用整筆刪除讓夥伴重填。
+   修正後除了存回本機，也會用跟一般送出時相同的方式補推一份到雲端（覆蓋雲端上那一筆舊資料），
+   避免NN之後按「從雲端收集」時，又把修正前的舊分數合併回來蓋掉這次的修正。 */
+function adminStartEditExaminer(period, position, staff, examinerName){
+  if(!isAdmin()) return;
+  editingSelf = null;
+  editingExaminer = {period, position, staff, examinerName};
+  renderOverview();
+}
+function adminCancelEditExaminer(){
+  editingExaminer = null;
+  renderOverview();
+}
+function adminSaveEditExaminer(period, position, staff, examinerName){
+  if(!isAdmin()) return;
+  const scores = {};
+  for(const item of ITEMS){
+    const el = document.getElementById(`edx-${item.key}`);
+    const num = Math.round(Number(el.value) * 10) / 10;
+    if(el.value === "" || isNaN(num) || num < 1 || num > 10){
+      alert(`「${item.name}」請輸入 1～10 之間的分數`);
+      return;
+    }
+    scores[item.key] = num;
+  }
+  const note = document.getElementById("edx-note").value.trim();
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  if(!record || !record.examiners || !record.examiners[examinerName]){ editingExaminer = null; renderOverview(); return; }
+  record.examiners[examinerName] = {...scores, note, ts: Date.now()};
+  saveData(data);
+  pushSubmissionToCloud({type:"examiner", period, position, staff, examinerName, note, ...scores});
+  editingExaminer = null;
+  renderOverview();
+}
+function adminStartEditSelf(period, position, staff){
+  if(!isAdmin()) return;
+  editingExaminer = null;
+  editingSelf = {period, position, staff};
+  renderOverview();
+}
+function adminCancelEditSelf(){
+  editingSelf = null;
+  renderOverview();
+}
+function adminSaveEditSelf(period, position, staff){
+  if(!isAdmin()) return;
+  const scores = {};
+  for(const item of ITEMS){
+    const el = document.getElementById(`edf-${item.key}`);
+    const num = Math.round(Number(el.value) * 10) / 10;
+    if(el.value === "" || isNaN(num) || num < 1 || num > 10){
+      alert(`「${item.name}」請輸入 1～10 之間的分數`);
+      return;
+    }
+    scores[item.key] = num;
+  }
+  const note = document.getElementById("edf-note").value.trim();
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  if(!record){ editingSelf = null; renderOverview(); return; }
+  record.self = {...scores, note, ts: Date.now()};
+  saveData(data);
+  pushSubmissionToCloud({type:"self", period, position, staff, note, ...scores});
+  editingSelf = null;
   renderOverview();
 }
 function updateOverrideNote(period, position, staff, value){
@@ -3239,23 +3315,61 @@ function renderOverview(){
     const gradeHtml = grade ? `<span class="grade grade-${grade}">${grade}</span>` : "—";
     const names = Object.keys(r.examiners||{});
     const rowWinners = currentWinnerNamesFor(r.period, r.position);
+    const safeStaff = r.staff.replace(/'/g,"\\'");
     const examinerLines = names.map(n=>{
       const e = r.examiners[n];
+      const safeN = n.replace(/'/g,"\\'");
+      const isEditingThis = editingExaminer && editingExaminer.period===r.period && editingExaminer.position===r.position && editingExaminer.staff===r.staff && editingExaminer.examinerName===n;
+      if(isEditingThis){
+        const itemInputs = ITEMS.map(item=>`
+          <label style="display:inline-block;margin:2px 6px 2px 0;">${item.name}
+            <input type="number" step="0.1" min="1" max="10" id="edx-${item.key}" value="${e[item.key]}" style="width:56px;">
+          </label>`).join("");
+        return `<div style="border:1px solid var(--line);padding:6px;border-radius:6px;">
+          <b>${n}</b>（編輯中）<br>
+          ${itemInputs}
+          <br><textarea id="edx-note" rows="2" style="width:100%;font-size:12px;margin-top:4px;" placeholder="備註">${escapeHtml(e.note||"")}</textarea>
+          <div style="margin-top:4px;">
+            <button type="button" onclick="adminSaveEditExaminer('${r.period}','${r.position}','${safeStaff}','${safeN}')">儲存</button>
+            <button type="button" class="ghost" onclick="adminCancelEditExaminer()">取消</button>
+          </div>
+        </div>`;
+      }
       const noteLine = e.note ? `<br><span class="helptext">💬 ${nl2br(e.note)}</span>` : "";
       const excluded = rowWinners.length > 0 && !rowWinners.includes(n);
-      const safeN = n.replace(/'/g,"\\'");
       const excludedLine = excluded
-        ? `<br><span class="status">（非目前當選考官，不計入平均——可能是舊資料或測試資料）</span> <button type="button" class="danger" style="font-size:11px;padding:1px 6px;" onclick="adminDeleteExaminerEntry('${r.period}','${r.position}','${r.staff.replace(/'/g,"\\'")}','${safeN}')">刪除這筆</button>`
+        ? `<br><span class="status">（非目前當選考官，不計入平均——可能是舊資料或測試資料）</span> <button type="button" class="danger" style="font-size:11px;padding:1px 6px;" onclick="adminDeleteExaminerEntry('${r.period}','${r.position}','${safeStaff}','${safeN}')">刪除這筆</button>`
         : "";
-      return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}）${noteLine}${excludedLine}`;
+      const editBtn = `<button type="button" class="ghost" style="font-size:11px;padding:1px 6px;" onclick="adminStartEditExaminer('${r.period}','${r.position}','${safeStaff}','${safeN}')">編輯</button>`;
+      return `${n}：協${e.collab} 效${e.efficiency} 品${e.quality}（加權${weighted(e).toFixed(2)}） ${editBtn}${noteLine}${excludedLine}`;
     });
     if(exAvg && exAvg.selfCountedAsExaminer){
       examinerLines.push(`<span class="status">（本人自評頂替第${winnerCount(r.position)}位考官：加權${self.toFixed(2)}）</span>`);
     }
     const examinerDetail = examinerLines.length ? examinerLines.join("<br>") : "—";
-    const selfDetail = r.self
-      ? `協${r.self.collab} 效${r.self.efficiency} 品${r.self.quality}<br>（加權${self.toFixed(2)}）`
-      : "—";
+    const isEditingSelf = editingSelf && editingSelf.period===r.period && editingSelf.position===r.position && editingSelf.staff===r.staff;
+    let selfDetail;
+    if(isEditingSelf){
+      const selfVals = r.self || {collab:5, efficiency:5, quality:5, note:""};
+      const itemInputs = ITEMS.map(item=>`
+        <label style="display:inline-block;margin:2px 6px 2px 0;">${item.name}
+          <input type="number" step="0.1" min="1" max="10" id="edf-${item.key}" value="${selfVals[item.key]}" style="width:56px;">
+        </label>`).join("");
+      selfDetail = `<div style="border:1px solid var(--line);padding:6px;border-radius:6px;">
+        （編輯中）<br>
+        ${itemInputs}
+        <br><textarea id="edf-note" rows="2" style="width:100%;font-size:12px;margin-top:4px;" placeholder="備註">${escapeHtml(selfVals.note||"")}</textarea>
+        <div style="margin-top:4px;">
+          <button type="button" onclick="adminSaveEditSelf('${r.period}','${r.position}','${safeStaff}')">儲存</button>
+          <button type="button" class="ghost" onclick="adminCancelEditSelf()">取消</button>
+        </div>
+      </div>`;
+    } else {
+      const editSelfBtn = `<button type="button" class="ghost" style="font-size:11px;padding:1px 6px;" onclick="adminStartEditSelf('${r.period}','${r.position}','${safeStaff}')">編輯</button>`;
+      selfDetail = r.self
+        ? `協${r.self.collab} 效${r.self.efficiency} 品${r.self.quality}<br>（加權${self.toFixed(2)}） ${editSelfBtn}`
+        : `— ${editSelfBtn}`;
+    }
     const ov = r.override || {};
     const rawNoteCount = collectRawNotes(r).length;
     return `<tr>
