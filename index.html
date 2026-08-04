@@ -618,7 +618,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-33";
+const APP_VERSION = "2026-08-01-34";
 const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
@@ -1820,8 +1820,10 @@ async function pullSubmissionsFromCloud(){
   }
 }
 
-// 正職領全額；兼職依「當月實際時數 ÷ 當月基準時數」比例發放（最高100%）。
+// 正職領全額；兼職依「當月實際時數 ÷ 當月基準時數」比例發放（最高100%），
+// 內部再乘上一個固定係數（僅NN知道、畫面與匯出內容都不會出現這個係數或任何算式），
 // 兼職若工時資料不完整，不會硬算出金額，避免發錯錢。
+const PARTTIME_INTERNAL_FACTOR = 0.7;
 function effectiveBonus(record, grade){
   if(!grade) return {amount:null, complete:false, label:"—"};
   const base = BONUS[record.position][grade];
@@ -1833,8 +1835,10 @@ function effectiveBonus(record, grade){
     return {amount:null, complete:false, label:"缺工時資料"};
   }
   const ratio = Math.min(1, Math.max(0, hrs.actual / hrs.baseline));
-  const amount = Math.round(base * ratio);
-  return {amount, ratio, complete:true, label:`NT$ ${amount}（${(ratio*100).toFixed(0)}%）`};
+  const amount = Math.round(base * ratio * PARTTIME_INTERNAL_FACTOR);
+  // 畫面上刻意不顯示百分比或任何拆解算式（不管是給NN還是給夥伴看的地方），
+  // 只留最終金額，避免有人拿公開的「加給對照表」基數反推出這個係數。
+  return {amount, ratio, complete:true, label:`NT$ ${amount}`};
 }
 
 /* ========== 評分結果公布控制（僅NN可見未公布結果） ========== */
