@@ -625,7 +625,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-37";
+const APP_VERSION = "2026-08-01-38";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -949,27 +949,34 @@ function renderStaffListPanel(){
   if(!card) return;
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
-  const rows = STAFF.map(name=>{
-    const safeN = name.replace(/'/g,"\\'");
-    const dept = staffDept(name);
-    return `
-    <tr>
-      <td class="left">${escapeHtml(name)}${name===ADMIN_NAME ? ' <span class="status">(管理員)</span>' : ""}</td>
-      <td>
-        <select onchange="setStaffDept('${safeN}', this.value)">
-          <option value="外場" ${dept==="外場"?"selected":""}>外場</option>
-          <option value="內場" ${dept==="內場"?"selected":""}>內場</option>
-        </select>
-      </td>
-      <td>
-        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="resetStaffPin('${safeN}')">重設密碼為0800</button>
-        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="renameStaff('${safeN}')">改名</button>
-        <button class="danger" style="font-size:12px;padding:3px 8px;" onclick="removeStaff('${safeN}')">移除</button>
-      </td>
-    </tr>
-  `;
-  }).join("");
-  document.getElementById("staff-list-table").innerHTML = `<table><tr><th class="left">姓名</th><th>部門</th><th>操作</th></tr>${rows}</table>`;
+  // 外場／內場分開兩張表顯示，各自小標題＋人數，方便NN管理時一眼分清楚，不用在同一張表裡找。
+  const renderGroup = (deptName, names) => {
+    if(!names.length) return `<h4 style="margin:14px 0 6px;">${deptName}（0人）</h4><p class="helptext">目前沒有夥伴。</p>`;
+    const rows = names.map(name=>{
+      const safeN = name.replace(/'/g,"\\'");
+      const dept = staffDept(name);
+      return `
+      <tr>
+        <td class="left">${escapeHtml(name)}${name===ADMIN_NAME ? ' <span class="status">(管理員)</span>' : ""}</td>
+        <td>
+          <select onchange="setStaffDept('${safeN}', this.value)">
+            <option value="外場" ${dept==="外場"?"selected":""}>外場</option>
+            <option value="內場" ${dept==="內場"?"selected":""}>內場</option>
+          </select>
+        </td>
+        <td>
+          <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="resetStaffPin('${safeN}')">重設密碼為0800</button>
+          <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="renameStaff('${safeN}')">改名</button>
+          <button class="danger" style="font-size:12px;padding:3px 8px;" onclick="removeStaff('${safeN}')">移除</button>
+        </td>
+      </tr>
+    `;
+    }).join("");
+    return `<h4 style="margin:14px 0 6px;">${deptName}（${names.length}人）</h4><table><tr><th class="left">姓名</th><th>部門</th><th>操作</th></tr>${rows}</table>`;
+  };
+  const outdoor = STAFF.filter(name => staffDept(name) === "外場");
+  const indoor = STAFF.filter(name => staffDept(name) === "內場");
+  document.getElementById("staff-list-table").innerHTML = renderGroup("外場", outdoor) + renderGroup("內場", indoor);
 }
 
 function resolveLoginName(){
@@ -1351,21 +1358,26 @@ function renderLearnedPanel(){
   const card = document.getElementById("ov-learned-card");
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
-  const header = `<th class="left">姓名</th>` + POSITIONS.map(p=>{
-    const sameDept = STAFF.filter(name => staffDept(name) === positionDept(p));
-    const allChecked = sameDept.length > 0 && sameDept.every(name=>isLearned(name, p));
-    return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allChecked ? "checked" : ""} onchange="toggleLearnedColumn('${p}', this.checked)"> 全選</label></th>`;
-  }).join("");
-  const rows = STAFF.map(name=>{
-    const dept = staffDept(name);
-    const cells = POSITIONS.map(p=>{
-      if(positionDept(p) !== dept) return `<td class="status">—</td>`; // 不同部門的崗位不適用，不顯示勾選框避免誤勾
-      const checked = isLearned(name, p);
-      return `<td><input type="checkbox" ${checked ? "checked" : ""} onchange="setLearned('${name}','${p}', this.checked)"></td>`;
+  // 外場／內場分開兩張表：每張表只列出該部門自己的崗位欄位，不用再靠「—」表示不適用，畫面更乾淨。
+  const renderGroup = (deptName, positions, names) => {
+    if(!names.length) return `<h4 style="margin:14px 0 6px;">${deptName}</h4><p class="helptext">目前沒有夥伴。</p>`;
+    const header = `<th class="left">姓名</th>` + positions.map(p=>{
+      const allChecked = names.length > 0 && names.every(name=>isLearned(name, p));
+      return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allChecked ? "checked" : ""} onchange="toggleLearnedColumn('${p}', this.checked)"> 全選</label></th>`;
     }).join("");
-    return `<tr><td class="left">${name}（${dept}）</td>${cells}</tr>`;
-  }).join("");
-  document.getElementById("learned-table").innerHTML = `<table><tr>${header}</tr>${rows}</table>`;
+    const rows = names.map(name=>{
+      const cells = positions.map(p=>{
+        const checked = isLearned(name, p);
+        return `<td><input type="checkbox" ${checked ? "checked" : ""} onchange="setLearned('${name}','${p}', this.checked)"></td>`;
+      }).join("");
+      return `<tr><td class="left">${name}</td>${cells}</tr>`;
+    }).join("");
+    return `<h4 style="margin:14px 0 6px;">${deptName}</h4><table><tr>${header}</tr>${rows}</table>`;
+  };
+  const outdoorStaff = STAFF.filter(name => staffDept(name) === "外場");
+  const indoorStaff = STAFF.filter(name => staffDept(name) === "內場");
+  document.getElementById("learned-table").innerHTML =
+    renderGroup("外場", OUTDOOR_POSITIONS, outdoorStaff) + renderGroup("內場", INDOOR_POSITIONS, indoorStaff);
 }
 
 /* ========== 投票資格（誰不用投哪個崗位的票） ========== */
@@ -1407,21 +1419,25 @@ function renderVoteExemptPanel(){
   if(!card) return;
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
-  const header = `<th class="left">姓名</th>` + POSITIONS.map(p=>{
-    const sameDept = STAFF.filter(name => staffDept(name) === positionDept(p));
-    const allRequired = sameDept.length > 0 && sameDept.every(name=>!isVoteExempt(name, p));
-    return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allRequired ? "checked" : ""} onchange="toggleVoteExemptColumn('${p}', !this.checked)"> 全選</label></th>`;
-  }).join("");
-  const rows = STAFF.map(name=>{
-    const dept = staffDept(name);
-    const cells = POSITIONS.map(p=>{
-      if(positionDept(p) !== dept) return `<td class="status">—</td>`;
-      const required = !isVoteExempt(name, p);
-      return `<td><input type="checkbox" ${required ? "checked" : ""} onchange="setVoteExempt('${name}','${p}', !this.checked)"></td>`;
+  const renderGroup = (deptName, positions, names) => {
+    if(!names.length) return `<h4 style="margin:14px 0 6px;">${deptName}</h4><p class="helptext">目前沒有夥伴。</p>`;
+    const header = `<th class="left">姓名</th>` + positions.map(p=>{
+      const allRequired = names.length > 0 && names.every(name=>!isVoteExempt(name, p));
+      return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allRequired ? "checked" : ""} onchange="toggleVoteExemptColumn('${p}', !this.checked)"> 全選</label></th>`;
     }).join("");
-    return `<tr><td class="left">${name}（${dept}）</td>${cells}</tr>`;
-  }).join("");
-  document.getElementById("vote-exempt-table").innerHTML = `<table><tr>${header}</tr>${rows}</table>`;
+    const rows = names.map(name=>{
+      const cells = positions.map(p=>{
+        const required = !isVoteExempt(name, p);
+        return `<td><input type="checkbox" ${required ? "checked" : ""} onchange="setVoteExempt('${name}','${p}', !this.checked)"></td>`;
+      }).join("");
+      return `<tr><td class="left">${name}</td>${cells}</tr>`;
+    }).join("");
+    return `<h4 style="margin:14px 0 6px;">${deptName}</h4><table><tr>${header}</tr>${rows}</table>`;
+  };
+  const outdoorStaff = STAFF.filter(name => staffDept(name) === "外場");
+  const indoorStaff = STAFF.filter(name => staffDept(name) === "內場");
+  document.getElementById("vote-exempt-table").innerHTML =
+    renderGroup("外場", OUTDOOR_POSITIONS, outdoorStaff) + renderGroup("內場", INDOOR_POSITIONS, indoorStaff);
 }
 // 依目前登入的人＋選定的崗位，決定投票表單要顯示還是隱藏。
 function renderVoteGate(){
@@ -2023,30 +2039,32 @@ function renderPersonnelPanel(){
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
   const period = document.getElementById("ov-period").value || currentMonth();
-  const rows = STAFF.map(name=>{
-    const isPT = isPartTime(name);
-    const hrs = getHoursRecord(period, name) || {actual:null, baseline:null};
-    const ratio = (isPT && hrs.actual != null && hrs.baseline) ? Math.min(1, Math.max(0, hrs.actual/hrs.baseline)) : null;
-    return `<tr>
-      <td class="left">${name}</td>
-      <td>
-        <select onchange="setStaffType('${name}', this.value)">
-          <option value="fulltime" ${!isPT ? "selected" : ""}>正職</option>
-          <option value="parttime" ${isPT ? "selected" : ""}>兼職</option>
-        </select>
-      </td>
-      <td>${isPT ? `<input type="number" min="0" step="0.5" style="width:80px;" value="${hrs.actual ?? ""}" placeholder="時數" onchange="setHours('${period}','${name}','actual', this.value)">` : "—"}</td>
-      <td>${isPT ? `<input type="number" min="0" step="0.5" style="width:80px;" value="${hrs.baseline ?? ""}" placeholder="基準" onchange="setHours('${period}','${name}','baseline', this.value)">` : "—"}</td>
-      <td>${isPT ? (ratio != null ? (ratio*100).toFixed(0)+"%" : "—") : "100%"}</td>
-    </tr>`;
-  }).join("");
-  document.getElementById("personnel-table").innerHTML = `
-    <table>
-      <tr><th class="left">姓名</th><th>雇用型態</th><th>${period} 實際時數</th><th>${period} 基準時數</th><th>比例</th></tr>
-      ${rows}
-    </table>
-    <p class="helptext">基準時數＝這個月正職滿班的工時，可依每月天數不同自行調整；兼職加給 = 崗位加給金額 × (實際時數 ÷ 基準時數)，最高以100%為限，工時未填則暫不計算金額。</p>
-  `;
+  const renderGroup = (deptName, names) => {
+    if(!names.length) return `<h4 style="margin:14px 0 6px;">${deptName}</h4><p class="helptext">目前沒有夥伴。</p>`;
+    const rows = names.map(name=>{
+      const isPT = isPartTime(name);
+      const hrs = getHoursRecord(period, name) || {actual:null, baseline:null};
+      const ratio = (isPT && hrs.actual != null && hrs.baseline) ? Math.min(1, Math.max(0, hrs.actual/hrs.baseline)) : null;
+      return `<tr>
+        <td class="left">${name}</td>
+        <td>
+          <select onchange="setStaffType('${name}', this.value)">
+            <option value="fulltime" ${!isPT ? "selected" : ""}>正職</option>
+            <option value="parttime" ${isPT ? "selected" : ""}>兼職</option>
+          </select>
+        </td>
+        <td>${isPT ? `<input type="number" min="0" step="0.5" style="width:80px;" value="${hrs.actual ?? ""}" placeholder="時數" onchange="setHours('${period}','${name}','actual', this.value)">` : "—"}</td>
+        <td>${isPT ? `<input type="number" min="0" step="0.5" style="width:80px;" value="${hrs.baseline ?? ""}" placeholder="基準" onchange="setHours('${period}','${name}','baseline', this.value)">` : "—"}</td>
+        <td>${isPT ? (ratio != null ? (ratio*100).toFixed(0)+"%" : "—") : "100%"}</td>
+      </tr>`;
+    }).join("");
+    return `<h4 style="margin:14px 0 6px;">${deptName}</h4><table><tr><th class="left">姓名</th><th>雇用型態</th><th>${period} 實際時數</th><th>${period} 基準時數</th><th>比例</th></tr>${rows}</table>`;
+  };
+  const outdoor = STAFF.filter(name => staffDept(name) === "外場");
+  const indoor = STAFF.filter(name => staffDept(name) === "內場");
+  document.getElementById("personnel-table").innerHTML =
+    renderGroup("外場", outdoor) + renderGroup("內場", indoor) +
+    `<p class="helptext">基準時數＝這個月正職滿班的工時，可依每月天數不同自行調整；兼職加給 = 崗位加給金額 × (實際時數 ÷ 基準時數)，最高以100%為限，工時未填則暫不計算金額。</p>`;
 }
 
 function updateOverrideGrade(period, position, staff, value){
@@ -3154,10 +3172,9 @@ function renderQuarterSummary(){
   // 一律優先改用結果快照，只有快照也沒有時才退回本機票數當最後備援。
   const votes = loadVotes();
   const snap = loadPublishedResults();
-  // 一般夥伴只看得到自己部門的崗位總表；管理員看得到全部（外場＋內場）。
-  const positionsToShow = isAdmin() ? POSITIONS.slice() : visibleElectionPositions();
-  const rows = positionsToShow.map(p=>{
-    const record = votes[voteRecordKey(quarter, p)];
+
+  const buildRows = (positions, q) => positions.map(p=>{
+    const record = votes[voteRecordKey(q, p)];
     const N = winnerCount(p);
     let ranked = null, voterCount = 0, reasonsHtml = "";
     if(isAdmin() && record && Object.keys(record.ballots || {}).length > 0){
@@ -3170,7 +3187,7 @@ function renderQuarterSummary(){
         return `<div style="margin-bottom:4px;"><b>${escapeHtml(voter)}：</b>${nl2br(b.reason)}</div>`;
       }).join("");
     } else {
-      const posSnap = snap[quarter] && snap[quarter][p];
+      const posSnap = snap[q] && snap[q][p];
       if(posSnap){
         // 結果快照，本身不含投票人身份，理由一律不顯示是誰寫的。
         ranked = posSnap.ranked;
@@ -3195,10 +3212,35 @@ function renderQuarterSummary(){
     return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${voterCount} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
   }).join("");
 
+  if(!isAdmin()){
+    // 一般夥伴只看得到自己部門的崗位總表，欄位裡的季度本來就是自己部門對的季度，維持原本邏輯不動。
+    const positionsToShow = visibleElectionPositions();
+    el.innerHTML = `
+      <table>
+        <tr><th class="left">崗位</th><th class="left">當選考官（依名次，${quarter}）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+        ${buildRows(positionsToShow, quarter)}
+      </table>
+    `;
+    return;
+  }
+
+  // 管理員看得到外場＋內場全部：分成兩區顯示，各自套用正確的季度字尾去查資料。
+  // 欄位裡打的季度可能剛好是內場自動帶出來、已經有「-內場」字尾的版本，這裡先還原成「基礎季度」，
+  // 外場／內場各自重新加上正確字尾去查，NN只要打一次基礎季度（例如2026-Q3），兩區都能對到正確結果，
+  // 不會再發生「打的季度剛好對不上另一個部門的字尾，該部門整排誤顯示成尚無投票」的狀況。
+  const baseQuarter = quarter.endsWith("-內場") ? quarter.slice(0, -3) : quarter;
+  const outdoorQuarter = baseQuarter;
+  const indoorQuarter = baseQuarter + "-內場";
   el.innerHTML = `
+    <h4 style="margin:0 0 6px;">外場（${outdoorQuarter}）</h4>
     <table>
-      <tr><th class="left">崗位</th><th class="left">當選考官（依名次，${quarter}）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-      ${rows}
+      <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+      ${buildRows(OUTDOOR_POSITIONS, outdoorQuarter)}
+    </table>
+    <h4 style="margin:16px 0 6px;">內場（${indoorQuarter}）</h4>
+    <table>
+      <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+      ${buildRows(INDOOR_POSITIONS, indoorQuarter)}
     </table>
   `;
 }
@@ -3478,7 +3520,12 @@ function computeBonusTotals(period){
       (acc[r.staff] = acc[r.staff] || []).push(r);
       return acc;
     }, {});
-  return STAFF.map(name=>{
+  // 名單＝目前在職的STAFF，再加上「這個月份留有考核紀錄、但查詢當下已經離職（被移除出STAFF）」的人，
+  // 避免薪資明細查詢漏算「當月在職、後來才離職」夥伴那個月的加給金額；
+  // 離職後 staffDept() 仍查得到他最後所屬的部門（removeStaff只會移除名單，不會清掉部門設定）。
+  const departedWithRecords = Object.keys(byStaff).filter(name => !STAFF.includes(name));
+  const names = STAFF.concat(departedWithRecords);
+  return names.map(name=>{
     const records = (byStaff[name] || [])
       .slice()
       .sort((a,b)=> POSITIONS.indexOf(a.position)-POSITIONS.indexOf(b.position));
@@ -3501,7 +3548,8 @@ function computeBonusTotals(period){
       partTime: isPartTime(name),
       detail: parts.length ? parts.join("、") : "—",
       total,
-      incomplete
+      incomplete,
+      departed: !STAFF.includes(name)
     };
   });
 }
@@ -3510,22 +3558,24 @@ function renderBonusTotalsTable(period){
   if(!el) return;
   const totals = computeBonusTotals(period);
   const grandTotal = totals.reduce((sum,t)=> sum + t.total, 0);
-  const rows = totals.map(t=>`
-    <tr>
-      <td class="left">${t.staff}${t.partTime ? ' <span class="status">(兼職)</span>' : ""}</td>
-      <td>${t.dept}</td>
-      <td class="left" style="font-size:12px;">${t.detail}</td>
-      <td><b>NT$ ${t.total}</b>${t.incomplete ? ' <span class="status">⚠️部分崗位待確認工時，未計入</span>' : ""}</td>
-    </tr>
-  `).join("");
-  el.innerHTML = `
-    <table>
-      <tr><th class="left">姓名</th><th>部門</th><th class="left">崗位加給明細</th><th>加給總額</th></tr>
-      ${rows}
-      <tr><td class="left"><b>全部加總</b></td><td></td><td></td><td><b>NT$ ${grandTotal}</b></td></tr>
-    </table>
-    <p class="helptext">標示「⚠️待確認工時」的人，是兼職夥伴這個月工時資料還沒填，該崗位加給金額算不出來，暫不計入總額與全部加總，請到「人事設定」補上工時後再重新查看，避免少算。</p>
-  `;
+  const renderGroup = (deptName, list) => {
+    if(!list.length) return `<h4 style="margin:14px 0 6px;">${deptName}</h4><p class="helptext">目前沒有夥伴。</p>`;
+    const rows = list.map(t=>`
+      <tr>
+        <td class="left">${t.staff}${t.partTime ? ' <span class="status">(兼職)</span>' : ""}${t.departed ? ' <span class="status">(已離職)</span>' : ""}</td>
+        <td class="left" style="font-size:12px;">${t.detail}</td>
+        <td><b>NT$ ${t.total}</b>${t.incomplete ? ' <span class="status">⚠️部分崗位待確認工時，未計入</span>' : ""}</td>
+      </tr>
+    `).join("");
+    const subtotal = list.reduce((sum,t)=> sum + t.total, 0);
+    return `<h4 style="margin:14px 0 6px;">${deptName}</h4><table><tr><th class="left">姓名</th><th class="left">崗位加給明細</th><th>加給總額</th></tr>${rows}<tr><td class="left"><b>${deptName}小計</b></td><td></td><td><b>NT$ ${subtotal}</b></td></tr></table>`;
+  };
+  const outdoor = totals.filter(t=> t.dept === "外場");
+  const indoor = totals.filter(t=> t.dept === "內場");
+  el.innerHTML =
+    renderGroup("外場", outdoor) + renderGroup("內場", indoor) +
+    `<p style="margin-top:10px;"><b>全部加總：NT$ ${grandTotal}</b></p>` +
+    `<p class="helptext">標示「⚠️待確認工時」的人，是兼職夥伴這個月工時資料還沒填，該崗位加給金額算不出來，暫不計入總額與全部加總，請到「人事設定」補上工時後再重新查看，避免少算。標示「已離職」的人，是查詢當下已經從名單移除、但這個月份仍留有加給紀錄的夥伴，方便離職當月的薪資明細不會漏算。</p>`;
 }
 function exportBonusTotalsCSV(){
   if(!isAdmin()){ alert("僅管理員可以匯出"); return; }
@@ -3533,13 +3583,16 @@ function exportBonusTotalsCSV(){
   const totals = computeBonusTotals(period);
   const rows = [["姓名","部門","雇用型態","崗位加給明細","加給總額(NT$)","備註"]];
   totals.forEach(t=>{
+    const notes = [];
+    if(t.incomplete) notes.push("部分崗位待確認工時，未計入總額");
+    if(t.departed) notes.push("查詢當下已離職");
     rows.push([
       t.staff,
       t.dept,
       t.partTime ? "兼職" : "正職",
       t.detail,
       t.total,
-      t.incomplete ? "部分崗位待確認工時，未計入總額" : ""
+      notes.join("；")
     ]);
   });
   const grandTotal = totals.reduce((sum,t)=> sum + t.total, 0);
