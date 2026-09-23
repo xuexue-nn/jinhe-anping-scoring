@@ -625,7 +625,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-36";
+const APP_VERSION = "2026-08-01-37";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -824,9 +824,14 @@ function ensureDefaultPins(){
 }
 
 /* ========== 內場夥伴名單：第一次上線這個版本時，自動把內場夥伴加進名單一次 ==========
-   只在NN（管理員）這台裝置上跑一次（用旗標記住跑過了），避免NN之後如果把某人移除，
-   下次重新整理頁面又被這裡偷偷加回來。 */
-const INDOOR_SEED_KEY = "jinheAnping_indoor_staff_seeded_v1";
+   只在NN（管理員）這台裝置上跑（用旗標記住「已經成功同步到雲端過」才會停止，避免NN之後
+   如果把某人移除，下次重新整理頁面又被這裡偷偷加回來）。
+   注意：舊版本這裡曾經有個時序上的bug——enterApp()裡先把內場名單補進本機，但緊接著開機時
+   自動「從雲端抓最新設定」會用雲端上（還沒同步過、沒有內場名單）的舊資料把本機剛補好的名單蓋掉，
+   而且當時的旗標又提早設定成「已完成」，導致之後永遠不會再自動補。這裡換一把新的旗標，
+   並且旗標只在NN成功按過「同步到雲端」之後才會設定，在那之前，每次從雲端抓設定回來後都會
+   重新檢查一次、自動補回缺少的內場夥伴，確保不會被雲端的舊資料蓋掉。 */
+const INDOOR_SEED_KEY = "jinheAnping_indoor_staff_seeded_v2";
 const INDOOR_SEED_STAFF = [
   {name:"阿凱", type:"fulltime"},
   {name:"阿紘", type:"fulltime"},
@@ -840,9 +845,10 @@ const INDOOR_SEED_STAFF = [
   {name:"小弘", type:"parttime"},
   {name:"育銓", type:"parttime"}
 ];
+// 回傳值：這次有沒有實際補回任何夥伴（true/false），呼叫端可以用來決定要不要重新整理畫面。
 function seedIndoorStaffOnce(){
-  if(!isAdmin()) return;
-  if(localStorage.getItem(INDOOR_SEED_KEY)) return;
+  if(!isAdmin()) return false;
+  if(localStorage.getItem(INDOOR_SEED_KEY)) return false; // 已經確認同步成功過，尊重之後手動的異動，不再自動補
   let staffChanged = false;
   const dept = loadStaffDept();
   const types = loadStaffTypes();
@@ -857,6 +863,13 @@ function seedIndoorStaffOnce(){
   saveStaffDept(dept);
   saveStaffTypes(types);
   if(staffChanged){ saveStaffList(STAFF); ensureDefaultPins(); }
+  // 故意不在這裡設定旗標——要等NN成功「同步到雲端」一次，內場名單才算真的保住了，
+  // 在那之前，每次重新整理或自動從雲端抓設定，都會再檢查一次、自動補回缺少的人。
+  return staffChanged;
+}
+// NN按「同步到雲端」成功送出之後呼叫：代表這份內場名單已經真的存進雲端了，
+// 之後可以放心尊重NN手動的異動（移除/改名），不用再每次自動補。
+function markIndoorSeedConfirmed(){
   localStorage.setItem(INDOOR_SEED_KEY, "1");
 }
 
@@ -1721,6 +1734,17 @@ async function pullSettingsFromCloud(silent){
       return;
     }
     applyCloudSettings(json.data);
+    // 內場名單自癒檢查：如果剛才這份雲端資料是同步之前的舊資料（還沒有內場名單），
+    // 這裡會立刻把缺少的內場夥伴補回來，避免開機時「先補上、又被雲端蓋掉」的時序問題；
+    // 一旦NN成功「同步到雲端」過一次，seedIndoorStaffOnce() 就不會再動手，不影響之後手動的異動。
+    if(isAdmin() && seedIndoorStaffOnce()){
+      renderStaffListPanel();
+      renderLearnedPanel();
+      renderVoteExemptPanel();
+      renderExStaffButtons();
+      renderElectionPositionOptions();
+      renderOverview();
+    }
     checkVersionMismatch(json.data && json.data.appVersion);
     const stamp = new Date().toLocaleString("zh-TW");
     const statusEl = document.getElementById("sync-status");
@@ -1863,6 +1887,9 @@ async function pushSettingsToCloud(){
     const res = await fetch(url, {method:"POST", body: JSON.stringify(payload)});
     const json = await res.json();
     if(json && json.ok){
+      // 這次同步已經把目前的夥伴名單（含內場）真正寫進雲端了，之後可以放心尊重NN手動的異動，
+      // 不用再讓 seedIndoorStaffOnce() 自動補人。
+      markIndoorSeedConfirmed();
       statusEl.textContent = `已同步到雲端（${new Date().toLocaleString("zh-TW")}），大家開啟系統時會自動更新。`;
       renderOverview();
       renderVoteResults();
