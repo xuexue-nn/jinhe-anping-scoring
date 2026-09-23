@@ -587,12 +587,30 @@
 
     <div class="card" id="el-quarterbind-card" style="display:none;">
       <h2>選舉季度綁定（僅管理員可見）</h2>
-      <p class="helptext">預設會自動用目前的日曆季度（例如7-9月自動對應2026-Q3），大家的「選舉季度」欄位會自動帶出正確值，不用自己填。如果這個崗位這次要用特別名稱辦選舉（例如季中重新選舉），把上面「選舉季度」改成你要的名稱，再按「綁定」，大家的裝置就會自動套用這個名稱，不用自己填、也不會打錯字投錯地方。</p>
+      <p class="helptext">預設會自動用目前的日曆季度（例如7-9月自動對應2026-Q3），大家的「選舉季度」欄位會自動帶出正確值，不用自己填。如果這個崗位這次要用特別名稱辦選舉（例如季中重新選舉），把上面「選舉季度」改成你要的名稱，再按「綁定」，大家的裝置就會自動套用這個名稱，不用自己填、也不會打錯字投錯地方。綁定只在「這一個日曆季度」有效，等真正的日曆季度換下一季，就會自動失效、改用新季度的預設值，不用妳自己記得去清除。</p>
       <div class="btnrow">
         <button class="primary" onclick="bindQuarterForPosition()">綁定目前這個崗位的選舉季度</button>
         <button class="ghost" onclick="clearQuarterBindForPosition()">清除綁定（恢復自動判斷）</button>
       </div>
       <p class="helptext" id="el-quarterbind-status"></p>
+      <div class="btnrow" style="margin-top:10px;">
+        <button class="ghost" onclick="bulkBindQuarterForDept()">整個部門套用上面「選舉季度」欄位的名稱</button>
+        <button class="ghost" onclick="bulkClearQuarterBindForDept()">整個部門清除綁定</button>
+      </div>
+      <p class="helptext" id="el-quarterbind-bulk-status"></p>
+
+      <h2 style="margin-top:22px;">沿用上一次結果（僅管理員可見）</h2>
+      <p class="helptext">換到新季度時，如果這個崗位這一季還沒有人重新投票，可以設定「沿用」某一次已經有結果的季度，畫面上會照樣顯示那次的當選名單（清楚標示是沿用的），不用每次換季度都重新投票；沒有設定沿用的崗位，新季度如果還沒人投票，就會顯示尚無資料，代表需要重新選舉。</p>
+      <div class="btnrow">
+        <button class="primary" onclick="setCarryOverForPosition()">設定沿用「目前這個崗位」現在的季度結果</button>
+        <button class="ghost" onclick="clearCarryOverForPosition()">取消這個崗位的沿用</button>
+      </div>
+      <p class="helptext" id="el-carryover-status"></p>
+      <div class="btnrow" style="margin-top:10px;">
+        <button class="ghost" onclick="bulkSetCarryOverForDept()">整個部門套用沿用（沿用各自目前的季度結果）</button>
+        <button class="ghost" onclick="bulkClearCarryOverForDept()">整個部門清除沿用</button>
+      </div>
+      <p class="helptext" id="el-carryover-bulk-status"></p>
     </div>
 
     <div class="card" id="el-admin-card" style="display:none;">
@@ -633,7 +651,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-39";
+const APP_VERSION = "2026-08-01-42";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -727,6 +745,7 @@ const LEARNED_KEY = "jinheAnping_learned_positions_v1";
 const VOTE_EXEMPT_KEY = "jinheAnping_vote_exempt_v1";
 const PERIOD_QUARTER_OVERRIDE_KEY = "jinheAnping_period_quarter_override_v1";
 const ELECTION_QUARTER_BIND_KEY = "jinheAnping_election_quarter_bind_v1";
+const ELECTION_CARRYOVER_KEY = "jinheAnping_election_carryover_v1";
 const SUBMIT_DEADLINE_KEY = "jinheAnping_submit_deadline_v1";
 const SUBMIT_REOPEN_KEY = "jinheAnping_submit_reopen_v1";
 const SYNC_URL_KEY = "jinheAnping_sync_url_v1";
@@ -1646,6 +1665,7 @@ function exportSettingsJSON(){
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
     electionQuarterBind: loadElectionQuarterBind(),
+    electionCarryOver: loadCarryOver(),
     submitDeadline: loadSubmitDeadlines(),
     submitReopen: loadSubmitReopens(),
     publish: loadPublish(),
@@ -1677,6 +1697,7 @@ function importSettingsFile(){
       if(obj.voteExempt) localStorage.setItem(VOTE_EXEMPT_KEY, JSON.stringify(obj.voteExempt));
       if(obj.periodQuarterOverride) localStorage.setItem(PERIOD_QUARTER_OVERRIDE_KEY, JSON.stringify(obj.periodQuarterOverride));
       if(obj.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(obj.electionQuarterBind));
+      if(obj.electionCarryOver) localStorage.setItem(ELECTION_CARRYOVER_KEY, JSON.stringify(obj.electionCarryOver));
       if(obj.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(obj.submitDeadline));
       if(obj.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(obj.submitReopen));
       if(obj.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(obj.publish));
@@ -1723,6 +1744,7 @@ function applyCloudSettings(data){
   if(data.voteExempt) localStorage.setItem(VOTE_EXEMPT_KEY, JSON.stringify(data.voteExempt));
   if(data.periodQuarterOverride) localStorage.setItem(PERIOD_QUARTER_OVERRIDE_KEY, JSON.stringify(data.periodQuarterOverride));
   if(data.electionQuarterBind) localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(data.electionQuarterBind));
+  if(data.electionCarryOver) localStorage.setItem(ELECTION_CARRYOVER_KEY, JSON.stringify(data.electionCarryOver));
   if(data.submitDeadline) localStorage.setItem(SUBMIT_DEADLINE_KEY, JSON.stringify(data.submitDeadline));
   if(data.submitReopen) localStorage.setItem(SUBMIT_REOPEN_KEY, JSON.stringify(data.submitReopen));
   if(data.publish) localStorage.setItem(PUBLISH_KEY, JSON.stringify(data.publish));
@@ -1904,6 +1926,7 @@ async function pushSettingsToCloud(){
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
     electionQuarterBind: loadElectionQuarterBind(),
+    electionCarryOver: loadCarryOver(),
     submitDeadline: loadSubmitDeadlines(),
     submitReopen: loadSubmitReopens(),
     publish: loadPublish(),
@@ -2739,23 +2762,46 @@ function currentQuarter(){
   return d.getFullYear() + "-Q" + q;
 }
 
-/* ========== 選舉季度綁定：管理員把「這個崗位目前要用的選舉季度名稱」設定好，大家自動套用，不用自己打字 ========== */
+/* ========== 選舉季度綁定：管理員把「這個崗位目前要用的選舉季度名稱」設定好，大家自動套用，不用自己打字 ==========
+   綁定只在「設定當下那個日曆季度」有效：格式是 {calendarQuarter:"2026-Q3", label:"Q3-3"}。
+   真正的日曆季度一換（例如10月一到變成2026-Q4），這筆綁定就自動失效，改用新季度的預設值，
+   NN不用自己記得每季去清除舊的綁定，也不會有「忘記清除、一路卡在舊季度名稱」的情況。 */
 function loadElectionQuarterBind(){
-  try{ return JSON.parse(localStorage.getItem(ELECTION_QUARTER_BIND_KEY)) || {}; }
-  catch(e){ return {}; }
+  let raw;
+  try{ raw = JSON.parse(localStorage.getItem(ELECTION_QUARTER_BIND_KEY)) || {}; }
+  catch(e){ raw = {}; }
+  // 相容升級前的舊格式（純文字季度名稱，例如"Q3-3"）：第一次讀到時自動轉成新格式，
+  // 蓋上「目前這個日曆季度」的印記，讓它照常套用到這一季結束為止，之後就會自動失效，
+  // 不會遺失NN現有已經設定好的綁定（例如內場目前的Q3-3）。
+  let migrated = false;
+  const calNow = currentQuarter();
+  Object.keys(raw).forEach(position=>{
+    if(typeof raw[position] === "string"){
+      raw[position] = { calendarQuarter: calNow, label: raw[position] };
+      migrated = true;
+    }
+  });
+  if(migrated) saveElectionQuarterBindRaw(raw);
+  return raw;
 }
-function saveElectionQuarterBind(m){ localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(m)); }
+function saveElectionQuarterBindRaw(m){ localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(m)); }
+function saveElectionQuarterBind(m){ saveElectionQuarterBindRaw(m); }
 // 內場的選舉季度預設值要跟外場的分開，不然同一個日曆季度（例如都是2026-Q3）會共用同一個「公布」開關，
 // NN公布外場結果時會連內場（可能都還沒投完票）一起公布出去；沒有特別綁定的內場崗位，
 // 季度名稱自動加上「-內場」字尾跟外場區分，外場完全不受影響、字尾對NN跟內場夥伴都看得懂。
 function deptQuarterSuffix(position){
   return positionDept(position) === "內場" ? "-內場" : "";
 }
-// 有綁定就用綁定的名稱，沒有綁定就照原本的日曆規則自動判斷（例如7-9月自動對應2026-Q3），內場再加上部門字尾。
+// 有「這一季」有效的綁定就用綁定的名稱；沒有綁定、或綁定是上一季留下來已經失效的，
+// 就照日曆規則自動判斷（例如7-9月自動對應2026-Q3），內場再加上部門字尾。
 function effectiveVoteQuarter(position){
   const bind = loadElectionQuarterBind();
-  const v = bind[position];
-  return (v && v.trim()) ? v.trim() : (currentQuarter() + deptQuarterSuffix(position));
+  const entry = bind[position];
+  const calNow = currentQuarter();
+  if(entry && entry.calendarQuarter === calNow && entry.label && entry.label.trim()){
+    return entry.label.trim();
+  }
+  return calNow + deptQuarterSuffix(position);
 }
 // 每次切換崗位、或登入時，把「選舉季度」欄位自動帶成這個崗位目前該用的值；
 // 欄位本身還是可以手動修改（例如管理員想開一次全新的季中選舉、或想回頭查看某個舊季度的結果），
@@ -2765,6 +2811,11 @@ function applyBoundQuarter(){
   const quarterEl = document.getElementById("el-quarter");
   if(!positionEl || !quarterEl) return;
   quarterEl.value = effectiveVoteQuarter(positionEl.value);
+  // 只有管理員可以自己打字改「選舉季度」（例如要查詢舊季度結果、或臨時開一次季中選舉）；
+  // 一般夥伴這格鎖起來只能唯讀，一律用系統自動帶出來的值去投票，避免手滑改錯字、
+  // 或多打/少打空格，導致這一票存到跟大家不一樣的季度裡、沒被算進同一批票數。
+  quarterEl.readOnly = !isAdmin();
+  quarterEl.title = isAdmin() ? "" : "由管理員統一設定，夥伴不能自己修改，這樣大家的票才會確實歸在同一季度裡。";
   renderQuarterBindPanel();
 }
 function bindQuarterForPosition(){
@@ -2773,10 +2824,10 @@ function bindQuarterForPosition(){
   const quarter = document.getElementById("el-quarter").value.trim();
   if(!quarter){ showMsg("el-msg","warn","請先在「選舉季度」欄位填好要綁定的名稱"); return; }
   const bind = loadElectionQuarterBind();
-  bind[position] = quarter;
+  bind[position] = { calendarQuarter: currentQuarter(), label: quarter };
   saveElectionQuarterBind(bind);
   renderQuarterBindPanel();
-  showMsg("el-msg","ok",`已把「${position}」的選舉季度綁定為「${quarter}」，記得到「評分總覽」的設定同步按一次「同步到雲端」，大家的裝置才會自動套用。`);
+  showMsg("el-msg","ok",`已把「${position}」的選舉季度綁定為「${quarter}」（只在這一季有效，下一季會自動改回預設值），記得到「評分總覽」的設定同步按一次「同步到雲端」，大家的裝置才會自動套用。`);
 }
 function clearQuarterBindForPosition(){
   if(!isAdmin()) return;
@@ -2787,6 +2838,110 @@ function clearQuarterBindForPosition(){
   applyBoundQuarter();
   showMsg("el-msg","ok",`已清除「${position}」的季度綁定，恢復自動依日曆判斷，記得同步到雲端。`);
 }
+// 整個部門一次套用/清除季度綁定，不用一個崗位一個崗位點：套用時會把「選舉季度」欄位目前打的名稱，
+// 套到目前選定崗位所屬部門的每一個崗位上（一樣只在這一季有效，下一季自動失效）。
+function bulkBindQuarterForDept(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const dept = positionDept(position);
+  const quarter = document.getElementById("el-quarter").value.trim();
+  if(!quarter){ showMsg("el-msg","warn","請先在「選舉季度」欄位填好要套用的名稱"); return; }
+  if(!confirm(`確定要把「${dept}」全部崗位的選舉季度都設定為「${quarter}」嗎？`)) return;
+  const positions = dept === "內場" ? INDOOR_POSITIONS : OUTDOOR_POSITIONS;
+  const bind = loadElectionQuarterBind();
+  const calNow = currentQuarter();
+  positions.forEach(p=>{ bind[p] = { calendarQuarter: calNow, label: quarter }; });
+  saveElectionQuarterBind(bind);
+  applyBoundQuarter();
+  const statusEl = document.getElementById("el-quarterbind-bulk-status");
+  if(statusEl) statusEl.textContent = `已將「${dept}」全部${positions.length}個崗位的選舉季度設定為「${quarter}」，記得同步到雲端。`;
+}
+function bulkClearQuarterBindForDept(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const dept = positionDept(position);
+  if(!confirm(`確定要清除「${dept}」全部崗位的季度綁定，恢復自動依日曆判斷嗎？`)) return;
+  const positions = dept === "內場" ? INDOOR_POSITIONS : OUTDOOR_POSITIONS;
+  const bind = loadElectionQuarterBind();
+  positions.forEach(p=>{ delete bind[p]; });
+  saveElectionQuarterBind(bind);
+  applyBoundQuarter();
+  const statusEl = document.getElementById("el-quarterbind-bulk-status");
+  if(statusEl) statusEl.textContent = `已清除「${dept}」全部崗位的季度綁定，記得同步到雲端。`;
+}
+
+/* ========== 沿用上一次結果：換到新季度時，這個崗位還沒人重新投票，就沿用指定那一次的結果顯示 ==========
+   carryOver[position] = 要沿用的來源季度字串（例如"Q3-3"）；沒有設定＝不沿用，新季度沒人投票就是沒有資料。
+   這是純顯示層的機制，不會動到任何票數紀錄本身：只要這個崗位「目前這一季」自己有真的票數/已公布結果，
+   一律優先顯示自己這一季的，沿用只在「這一季完全沒有資料」時才會派上用場。 */
+function loadCarryOver(){
+  try{ return JSON.parse(localStorage.getItem(ELECTION_CARRYOVER_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveCarryOver(m){ localStorage.setItem(ELECTION_CARRYOVER_KEY, JSON.stringify(m)); }
+function carryOverSource(position){
+  const m = loadCarryOver();
+  return (m[position] && m[position].trim()) ? m[position].trim() : null;
+}
+// 決定某個崗位「現在該顯示」的季度與資料來源：優先用它自己這一季的（有真的票數或已公布快照才算），
+// 沒有的話，如果有設定沿用，就改用沿用來源那一季的資料顯示，並標記為「沿用」。
+function resolveDisplayQuarter(position){
+  const current = effectiveVoteQuarter(position);
+  const votes = loadVotes();
+  const snap = loadPublishedResults();
+  const curRecord = votes[voteRecordKey(current, position)];
+  const hasCurrentData = (curRecord && Object.keys(curRecord.ballots || {}).length > 0) || !!(snap[current] && snap[current][position]);
+  if(hasCurrentData) return { quarter: current, carried: false };
+  const source = carryOverSource(position);
+  if(source && source !== current) return { quarter: source, carried: true };
+  return { quarter: current, carried: false };
+}
+function setCarryOverForPosition(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const source = effectiveVoteQuarter(position); // 抓「現在」這個崗位正在用的季度，當作沿用來源
+  const m = loadCarryOver();
+  m[position] = source;
+  saveCarryOver(m);
+  renderQuarterBindPanel();
+  showMsg("el-msg","ok",`已設定「${position}」沿用目前季度（${source}）的結果，之後新季度如果還沒有人重新投票，會自動顯示這次的結果（清楚標示是沿用的）。記得同步到雲端。`);
+}
+function clearCarryOverForPosition(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const m = loadCarryOver();
+  delete m[position];
+  saveCarryOver(m);
+  renderQuarterBindPanel();
+  showMsg("el-msg","ok",`已取消「${position}」的沿用設定，之後新季度如果沒人重新投票，就會顯示尚無資料（需要重新選舉）。記得同步到雲端。`);
+}
+function bulkSetCarryOverForDept(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const dept = positionDept(position);
+  if(!confirm(`確定要把「${dept}」全部崗位都設定為沿用各自目前的季度結果嗎？（之後可以再針對個別考官異動的崗位取消沿用）`)) return;
+  const positions = dept === "內場" ? INDOOR_POSITIONS : OUTDOOR_POSITIONS;
+  const m = loadCarryOver();
+  positions.forEach(p=>{ m[p] = effectiveVoteQuarter(p); });
+  saveCarryOver(m);
+  renderQuarterBindPanel();
+  const statusEl = document.getElementById("el-carryover-bulk-status");
+  if(statusEl) statusEl.textContent = `已將「${dept}」全部${positions.length}個崗位設定為沿用目前各自的季度結果，記得同步到雲端。你可以再針對個別有考官異動的崗位按「取消這個崗位的沿用」。`;
+}
+function bulkClearCarryOverForDept(){
+  if(!isAdmin()) return;
+  const position = document.getElementById("el-position").value;
+  const dept = positionDept(position);
+  if(!confirm(`確定要清除「${dept}」全部崗位的沿用設定嗎？`)) return;
+  const positions = dept === "內場" ? INDOOR_POSITIONS : OUTDOOR_POSITIONS;
+  const m = loadCarryOver();
+  positions.forEach(p=>{ delete m[p]; });
+  saveCarryOver(m);
+  renderQuarterBindPanel();
+  const statusEl = document.getElementById("el-carryover-bulk-status");
+  if(statusEl) statusEl.textContent = `已清除「${dept}」全部崗位的沿用設定，記得同步到雲端。`;
+}
+
 function renderQuarterBindPanel(){
   const card = document.getElementById("el-quarterbind-card");
   if(!card) return;
@@ -2794,12 +2949,24 @@ function renderQuarterBindPanel(){
   card.style.display = "block";
   const position = document.getElementById("el-position").value;
   const bind = loadElectionQuarterBind();
+  const entry = bind[position];
+  const calNow = currentQuarter();
   const statusEl = document.getElementById("el-quarterbind-status");
-  if(!statusEl) return;
-  if(bind[position]){
-    statusEl.textContent = `「${position}」目前綁定季度：${bind[position]}（大家的裝置會自動套用這個名稱，不用自己填）`;
-  } else {
-    statusEl.textContent = `「${position}」目前沒有綁定，大家會自動依日曆季度判斷（目前：${currentQuarter() + deptQuarterSuffix(position)}）`;
+  if(statusEl){
+    if(entry && entry.calendarQuarter === calNow && entry.label){
+      statusEl.textContent = `「${position}」目前綁定季度：${entry.label}（大家的裝置會自動套用這個名稱，不用自己填；這個綁定只在${calNow}這一季有效，下一季會自動改回預設值）`;
+    } else {
+      statusEl.textContent = `「${position}」目前沒有（有效的）綁定，大家會自動依日曆季度判斷（目前：${currentQuarter() + deptQuarterSuffix(position)}）`;
+    }
+  }
+  const carryEl = document.getElementById("el-carryover-status");
+  if(carryEl){
+    const source = carryOverSource(position);
+    if(source){
+      carryEl.textContent = `「${position}」目前設定沿用「${source}」的結果：如果${effectiveVoteQuarter(position)}這一季還沒有人重新投票，會自動顯示「${source}」那次的當選名單。`;
+    } else {
+      carryEl.textContent = `「${position}」目前沒有設定沿用：如果${effectiveVoteQuarter(position)}這一季還沒有人投票，會顯示尚無資料。`;
+    }
   }
 }
 
@@ -3195,21 +3362,29 @@ function buildRankRows(ranked, N){
   }).join("");
 }
 
+// 每個崗位各自抓自己目前該用的季度（有綁定就用綁定的名稱，沒有就用日曆自動判斷的季度）去查結果，
+// 不再靠「選舉季度」欄位打一個共用的季度字串去查全部崗位——這樣就算像內場那樣，
+// 有些崗位還在用舊季度（例如考官離職、單獨重新綁定新季度重選），有些崗位還是原本的季度，
+// 也能一次全部顯示正確結果，不用一個一個崗位切換查詢。
 function renderQuarterSummary(){
-  const quarter = document.getElementById("el-quarter").value.trim();
   const el = document.getElementById("el-summary-table");
-  if(!quarter){ el.innerHTML = `<p class="helptext">請先輸入季度。</p>`; return; }
-  if(!isAdmin() && !isPublished(quarter)){
-    el.innerHTML = `<p class="helptext">本季投票結果尚未公布，請耐心等候管理員公告。</p>`;
-    return;
-  }
 
   // 只有管理員才信任本機即時票數；一般夥伴的本機頂多只有自己那一票，不能拿來算，
   // 一律優先改用結果快照，只有快照也沒有時才退回本機票數當最後備援。
   const votes = loadVotes();
   const snap = loadPublishedResults();
 
-  const buildRows = (positions, q) => positions.map(p=>{
+  const buildRow = (p) => {
+    // 這個崗位「現在」該顯示的季度：自己這一季有真的資料就用自己的；
+    // 如果這一季完全沒資料、又有設定沿用，就改用沿用來源那一季的資料顯示（並標示「沿用」）。
+    const resolved = resolveDisplayQuarter(p);
+    const q = resolved.quarter;
+    const carriedNote = resolved.carried ? `（沿用${q}）` : `（${q}）`;
+    // 一般夥伴：這個崗位目前顯示的這一季（不論是自己的還是沿用來的）還沒公布，就不顯示投票細節，
+    // 只提示尚未公布（不會擋住其他已公布的崗位）。
+    if(!isAdmin() && !isPublished(q)){
+      return `<tr><td class="left">${p}</td><td class="status" colspan="3">本季${carriedNote}投票結果尚未公布</td></tr>`;
+    }
     const record = votes[voteRecordKey(q, p)];
     const N = winnerCount(p);
     let ranked = null, voterCount = 0, reasonsHtml = "";
@@ -3242,51 +3417,30 @@ function renderQuarterSummary(){
       }
     }
     if(!ranked){
-      return `<tr><td class="left">${p}</td><td class="status">尚無投票</td><td>0 人</td><td class="left status">—</td></tr>`;
+      return `<tr><td class="left">${p}</td><td class="status">尚無投票<div style="font-size:11px;color:var(--muted);margin-top:2px;">季度${carriedNote}</div></td><td>0 人</td><td class="left status">—</td></tr>`;
     }
     const winners = ranked.slice(0,N).map((c,i)=> `${i+1}. ${c.name}（${c.score}分）`).join("　") || "—";
-    return `<tr><td class="left">${p}</td><td class="left">${winners}</td><td>${voterCount} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
-  }).join("");
+    return `<tr><td class="left">${p}</td><td class="left">${winners}<div style="font-size:11px;color:var(--muted);margin-top:2px;">季度${carriedNote}</div></td><td>${voterCount} 人</td><td class="left" style="font-size:12px;">${reasonsHtml || '<span class="status">（無填寫）</span>'}</td></tr>`;
+  };
+
+  const buildTable = (positions) => `
+    <table>
+      <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+      ${positions.map(buildRow).join("")}
+    </table>
+  `;
 
   if(!isAdmin()){
-    // 一般夥伴只看得到自己部門的崗位總表，欄位裡的季度本來就是自己部門對的季度，維持原本邏輯不動。
-    const positionsToShow = visibleElectionPositions();
-    el.innerHTML = `
-      <table>
-        <tr><th class="left">崗位</th><th class="left">當選考官（依名次，${quarter}）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-        ${buildRows(positionsToShow, quarter)}
-      </table>
-    `;
+    // 一般夥伴只看得到自己部門的崗位總表，每個崗位各自顯示自己的季度與結果。
+    el.innerHTML = buildTable(visibleElectionPositions());
     return;
   }
 
-  // 管理員預設看得到外場＋內場全部，也可以用上面「檢視部門」篩選只看其中一邊；分成兩區顯示，各自套用正確的季度字尾去查資料。
-  // 欄位裡打的季度可能剛好是內場自動帶出來、已經有「-內場」字尾的版本，這裡先還原成「基礎季度」，
-  // 外場／內場各自重新加上正確字尾去查，NN只要打一次基礎季度（例如2026-Q3），兩區都能對到正確結果，
-  // 不會再發生「打的季度剛好對不上另一個部門的字尾，該部門整排誤顯示成尚無投票」的狀況。
-  const baseQuarter = quarter.endsWith("-內場") ? quarter.slice(0, -3) : quarter;
-  const outdoorQuarter = baseQuarter;
-  const indoorQuarter = baseQuarter + "-內場";
+  // 管理員預設看得到外場＋內場全部，也可以用上面「檢視部門」篩選只看其中一邊。
   const filter = adminElectionDeptFilter();
   let sections = "";
-  if(filter !== "內場"){
-    sections += `
-      <h4 style="margin:0 0 6px;">外場（${outdoorQuarter}）</h4>
-      <table>
-        <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-        ${buildRows(OUTDOOR_POSITIONS, outdoorQuarter)}
-      </table>
-    `;
-  }
-  if(filter !== "外場"){
-    sections += `
-      <h4 style="margin:16px 0 6px;">內場（${indoorQuarter}）</h4>
-      <table>
-        <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-        ${buildRows(INDOOR_POSITIONS, indoorQuarter)}
-      </table>
-    `;
-  }
+  if(filter !== "內場") sections += `<h4 style="margin:0 0 6px;">外場</h4>${buildTable(OUTDOOR_POSITIONS)}`;
+  if(filter !== "外場") sections += `<h4 style="margin:16px 0 6px;">內場</h4>${buildTable(INDOOR_POSITIONS)}`;
   el.innerHTML = sections;
 }
 
