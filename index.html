@@ -547,6 +547,14 @@
           <div class="locked-name" id="el-voter-display">—</div>
         </div>
       </div>
+      <div class="field" id="el-dept-filter-wrap" style="display:none;">
+        <label>檢視部門（僅管理員看得到，不影響大家投票，只是方便你自己篩選畫面）</label>
+        <select id="el-dept-filter" onchange="onElectionDeptFilterChange()">
+          <option value="全部">全部（外場＋內場）</option>
+          <option value="外場">只看外場</option>
+          <option value="內場">只看內場</option>
+        </select>
+      </div>
       <p class="helptext" id="vote-exempt-msg" style="display:none;"></p>
       <div id="vote-form-fields">
         <div class="row">
@@ -625,7 +633,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-38";
+const APP_VERSION = "2026-08-01-39";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -1137,6 +1145,9 @@ function enterApp(){
   renderQuarterSummary();
   checkSelfEligibility();
   renderExistingSelf();
+  // 開機時「崗位加給對照表」是在還沒登入、不知道是誰之前就先畫過一次（預設只顯示外場），
+  // 這裡登入完成、知道currentUser的部門之後要重畫一次，內場夥伴才看得到自己的內場對照表。
+  renderBonusTable();
 }
 
 /* ========== 資料存取 ========== */
@@ -1436,8 +1447,11 @@ function renderVoteExemptPanel(){
   };
   const outdoorStaff = STAFF.filter(name => staffDept(name) === "外場");
   const indoorStaff = STAFF.filter(name => staffDept(name) === "內場");
-  document.getElementById("vote-exempt-table").innerHTML =
-    renderGroup("外場", OUTDOOR_POSITIONS, outdoorStaff) + renderGroup("內場", INDOOR_POSITIONS, indoorStaff);
+  const filter = adminElectionDeptFilter(); // 跟上面「檢視部門」篩選連動，只看外場就不顯示內場表格，反之亦然
+  let html = "";
+  if(filter !== "內場") html += renderGroup("外場", OUTDOOR_POSITIONS, outdoorStaff);
+  if(filter !== "外場") html += renderGroup("內場", INDOOR_POSITIONS, indoorStaff);
+  document.getElementById("vote-exempt-table").innerHTML = html;
 }
 // 依目前登入的人＋選定的崗位，決定投票表單要顯示還是隱藏。
 function renderVoteGate(){
@@ -2363,8 +2377,24 @@ function visibleExaminerPositions(period){
 
 // 考官選舉的崗位下拉：一般夥伴只看得到自己部門（外場／內場）的崗位，管理員永遠看得到全部，
 // 確保「內外場選舉完全分開」——外場夥伴不會在投票畫面看到內場崗位，反之亦然。
+// 管理員專用：「考官選舉」分頁可以篩選只看外場或只看內場（純顯示用，不影響任何人實際能投票/選誰）。
+function adminElectionDeptFilter(){
+  const el = document.getElementById("el-dept-filter");
+  return el ? el.value : "全部";
+}
+function onElectionDeptFilterChange(){
+  renderElectionPositionOptions();
+  renderVoteExemptPanel();
+  renderQuarterSummary();
+}
 function visibleElectionPositions(){
-  if(isAdmin() || !currentUser) return POSITIONS.slice();
+  if(isAdmin()){
+    const filter = adminElectionDeptFilter();
+    if(filter === "外場") return OUTDOOR_POSITIONS.slice();
+    if(filter === "內場") return INDOOR_POSITIONS.slice();
+    return POSITIONS.slice();
+  }
+  if(!currentUser) return POSITIONS.slice();
   const dept = staffDept(currentUser);
   return POSITIONS.filter(position => positionDept(position) === dept);
 }
@@ -2987,8 +3017,14 @@ function refreshPublishedScoreResultsSnapshot(){
 
 function renderAdminPanel(){
   const card = document.getElementById("el-admin-card");
-  if(!isAdmin()){ card.style.display = "none"; return; }
+  const filterWrap = document.getElementById("el-dept-filter-wrap");
+  if(!isAdmin()){
+    card.style.display = "none";
+    if(filterWrap) filterWrap.style.display = "none";
+    return;
+  }
   card.style.display = "block";
+  if(filterWrap) filterWrap.style.display = "flex";
   const quarter = document.getElementById("el-quarter").value.trim() || currentQuarter();
   const pub = isPublished(quarter);
   document.getElementById("el-admin-status").textContent =
@@ -3224,25 +3260,34 @@ function renderQuarterSummary(){
     return;
   }
 
-  // 管理員看得到外場＋內場全部：分成兩區顯示，各自套用正確的季度字尾去查資料。
+  // 管理員預設看得到外場＋內場全部，也可以用上面「檢視部門」篩選只看其中一邊；分成兩區顯示，各自套用正確的季度字尾去查資料。
   // 欄位裡打的季度可能剛好是內場自動帶出來、已經有「-內場」字尾的版本，這裡先還原成「基礎季度」，
   // 外場／內場各自重新加上正確字尾去查，NN只要打一次基礎季度（例如2026-Q3），兩區都能對到正確結果，
   // 不會再發生「打的季度剛好對不上另一個部門的字尾，該部門整排誤顯示成尚無投票」的狀況。
   const baseQuarter = quarter.endsWith("-內場") ? quarter.slice(0, -3) : quarter;
   const outdoorQuarter = baseQuarter;
   const indoorQuarter = baseQuarter + "-內場";
-  el.innerHTML = `
-    <h4 style="margin:0 0 6px;">外場（${outdoorQuarter}）</h4>
-    <table>
-      <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-      ${buildRows(OUTDOOR_POSITIONS, outdoorQuarter)}
-    </table>
-    <h4 style="margin:16px 0 6px;">內場（${indoorQuarter}）</h4>
-    <table>
-      <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
-      ${buildRows(INDOOR_POSITIONS, indoorQuarter)}
-    </table>
-  `;
+  const filter = adminElectionDeptFilter();
+  let sections = "";
+  if(filter !== "內場"){
+    sections += `
+      <h4 style="margin:0 0 6px;">外場（${outdoorQuarter}）</h4>
+      <table>
+        <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+        ${buildRows(OUTDOOR_POSITIONS, outdoorQuarter)}
+      </table>
+    `;
+  }
+  if(filter !== "外場"){
+    sections += `
+      <h4 style="margin:16px 0 6px;">內場（${indoorQuarter}）</h4>
+      <table>
+        <tr><th class="left">崗位</th><th class="left">當選考官（依名次）</th><th>投票人數</th><th class="left">大家判斷的依據</th></tr>
+        ${buildRows(INDOOR_POSITIONS, indoorQuarter)}
+      </table>
+    `;
+  }
+  el.innerHTML = sections;
 }
 
 function exportVote(){
