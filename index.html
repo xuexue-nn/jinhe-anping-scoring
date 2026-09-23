@@ -408,9 +408,16 @@
           <label>新增夥伴</label>
           <input type="text" id="staff-add-input" placeholder="輸入姓名">
         </div>
+        <div class="field">
+          <label>部門</label>
+          <select id="staff-add-dept">
+            <option value="外場">外場</option>
+            <option value="內場">內場</option>
+          </select>
+        </div>
       </div>
       <div class="btnrow">
-        <button class="primary" onclick="addStaff(document.getElementById('staff-add-input').value)">新增</button>
+        <button class="primary" onclick="addStaff(document.getElementById('staff-add-input').value, document.getElementById('staff-add-dept').value)">新增</button>
       </div>
       <div class="msg" id="staff-list-msg"></div>
       <div id="staff-list-table"></div>
@@ -618,8 +625,17 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-34";
-const POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
+const APP_VERSION = "2026-08-01-35";
+// 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
+// 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
+// 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
+const OUTDOOR_POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
+const INDOOR_POSITIONS = ["主爐","副爐","切肉","烤炸","甜點","擺盤","備料","內場開早","內場收班"];
+const POSITIONS = OUTDOOR_POSITIONS.concat(INDOOR_POSITIONS);
+const POSITION_DEPT = {};
+OUTDOOR_POSITIONS.forEach(p=>{ POSITION_DEPT[p] = "外場"; });
+INDOOR_POSITIONS.forEach(p=>{ POSITION_DEPT[p] = "內場"; });
+function positionDept(position){ return POSITION_DEPT[position] || "外場"; }
 const DEFAULT_STAFF = ["小莫","Anna","NN","旻柔","小美","松鼠","小白"];
 const STAFF_LIST_KEY = "jinheAnping_staff_list_v1";
 function loadStaffList(){
@@ -678,7 +694,16 @@ const BONUS = {
   "櫃檯": {S:500, A:325, B:100, C:0},
   "接待": {S:600, A:350, B:100, C:0},
   "開早": {S:300, A:200, B:100, C:0},
-  "收班": {S:300, A:200, B:100, C:0}
+  "收班": {S:300, A:200, B:100, C:0},
+  "主爐": {S:600, A:350, B:100, C:0},
+  "副爐": {S:600, A:350, B:100, C:0},
+  "切肉": {S:300, A:200, B:100, C:0},
+  "烤炸": {S:450, A:300, B:100, C:0},
+  "甜點": {S:500, A:325, B:100, C:0},
+  "擺盤": {S:400, A:250, B:100, C:0},
+  "備料": {S:450, A:300, B:100, C:0},
+  "內場開早": {S:300, A:200, B:100, C:0},
+  "內場收班": {S:300, A:200, B:100, C:0}
 };
 
 const STORE_KEY = "jinheAnping_waichang_scores_v1";
@@ -688,6 +713,7 @@ const SCORE_PUBLISH_KEY = "jinheAnping_score_published_v1";
 const PUBLISHED_RESULTS_KEY = "jinheAnping_published_results_v1";
 const PUBLISHED_SCORE_RESULTS_KEY = "jinheAnping_published_score_results_v1";
 const STAFF_TYPE_KEY = "jinheAnping_staff_type_v1";
+const STAFF_DEPT_KEY = "jinheAnping_staff_department_v1";
 const HOURS_KEY = "jinheAnping_parttime_hours_v1";
 const LEARNED_KEY = "jinheAnping_learned_positions_v1";
 const VOTE_EXEMPT_KEY = "jinheAnping_vote_exempt_v1";
@@ -797,21 +823,62 @@ function ensureDefaultPins(){
   if(changed) savePins(pins);
 }
 
+/* ========== 內場夥伴名單：第一次上線這個版本時，自動把內場夥伴加進名單一次 ==========
+   只在NN（管理員）這台裝置上跑一次（用旗標記住跑過了），避免NN之後如果把某人移除，
+   下次重新整理頁面又被這裡偷偷加回來。 */
+const INDOOR_SEED_KEY = "jinheAnping_indoor_staff_seeded_v1";
+const INDOOR_SEED_STAFF = [
+  {name:"阿凱", type:"fulltime"},
+  {name:"阿紘", type:"fulltime"},
+  {name:"俊豪", type:"fulltime"},
+  {name:"家瑭", type:"fulltime"},
+  {name:"阿瑋", type:"fulltime"},
+  {name:"小真", type:"fulltime"},
+  {name:"昱程", type:"fulltime"},
+  {name:"小如", type:"fulltime"},
+  {name:"守哲", type:"parttime"},
+  {name:"小弘", type:"parttime"},
+  {name:"育銓", type:"parttime"}
+];
+function seedIndoorStaffOnce(){
+  if(!isAdmin()) return;
+  if(localStorage.getItem(INDOOR_SEED_KEY)) return;
+  let staffChanged = false;
+  const dept = loadStaffDept();
+  const types = loadStaffTypes();
+  INDOOR_SEED_STAFF.forEach(({name, type})=>{
+    if(!STAFF.includes(name)){
+      STAFF.push(name);
+      staffChanged = true;
+    }
+    dept[name] = "內場";
+    types[name] = type;
+  });
+  saveStaffDept(dept);
+  saveStaffTypes(types);
+  if(staffChanged){ saveStaffList(STAFF); ensureDefaultPins(); }
+  localStorage.setItem(INDOOR_SEED_KEY, "1");
+}
+
 /* ========== 夥伴名單管理（僅NN可新增/刪除/改名） ========== */
 // 名單本身也算「設定」，會跟著崗位資格/人事設定一起走雲端同步；
 // 刪除或改名只會影響名單顯示與登入資格，不會刪除或搬動過去已存的評分/自評/投票紀錄
 // （那些是用當時的姓名存的，NN在「評分總覽」還是看得到）。
-function addStaff(name){
+function addStaff(name, dept){
   if(!isAdmin()) return;
   name = (name||"").trim();
+  dept = (dept === "內場") ? "內場" : "外場";
   if(!name){ showMsg("staff-list-msg","warn","請輸入姓名"); return; }
   if(STAFF.includes(name)){ showMsg("staff-list-msg","warn",`「${name}」已經在名單中`); return; }
   STAFF.push(name);
   saveStaffList(STAFF);
   ensureDefaultPins();
+  const d = loadStaffDept();
+  d[name] = dept;
+  saveStaffDept(d);
   const input = document.getElementById("staff-add-input");
   if(input) input.value = "";
-  showMsg("staff-list-msg","ok",`已新增「${name}」，預設密碼 0800，記得同步到雲端讓大家的裝置更新。`);
+  showMsg("staff-list-msg","ok",`已新增「${name}」（${dept}），預設密碼 0800，記得同步到雲端讓大家的裝置更新。`);
   afterStaffListChanged();
 }
 function removeStaff(name){
@@ -833,6 +900,11 @@ function renameStaff(oldName){
   STAFF = STAFF.map(n=> n===oldName ? trimmed : n);
   saveStaffList(STAFF);
   ensureDefaultPins();
+  // 部門設定要跟著改名一起搬過去，不然改名後會被當成新人、預設掉回外場，看不到自己內場的崗位。
+  const d = loadStaffDept();
+  d[trimmed] = d[oldName] || "外場";
+  delete d[oldName];
+  saveStaffDept(d);
   showMsg("staff-list-msg","ok",`已將「${oldName}」改名為「${trimmed}」，記得同步到雲端。`);
   afterStaffListChanged();
 }
@@ -851,9 +923,11 @@ function resetStaffPin(name){
 function afterStaffListChanged(){
   renderExStaffButtons();
   renderStaffListPanel();
+  renderElectionPositionOptions();
   if(isAdmin()){
     renderPersonnelPanel();
     renderLearnedPanel();
+    renderVoteExemptPanel();
     renderOverview();
   }
 }
@@ -862,17 +936,27 @@ function renderStaffListPanel(){
   if(!card) return;
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
-  const rows = STAFF.map(name=>`
+  const rows = STAFF.map(name=>{
+    const safeN = name.replace(/'/g,"\\'");
+    const dept = staffDept(name);
+    return `
     <tr>
       <td class="left">${escapeHtml(name)}${name===ADMIN_NAME ? ' <span class="status">(管理員)</span>' : ""}</td>
       <td>
-        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="resetStaffPin('${name.replace(/'/g,"\\'")}')">重設密碼為0800</button>
-        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="renameStaff('${name.replace(/'/g,"\\'")}')">改名</button>
-        <button class="danger" style="font-size:12px;padding:3px 8px;" onclick="removeStaff('${name.replace(/'/g,"\\'")}')">移除</button>
+        <select onchange="setStaffDept('${safeN}', this.value)">
+          <option value="外場" ${dept==="外場"?"selected":""}>外場</option>
+          <option value="內場" ${dept==="內場"?"selected":""}>內場</option>
+        </select>
+      </td>
+      <td>
+        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="resetStaffPin('${safeN}')">重設密碼為0800</button>
+        <button class="ghost" style="font-size:12px;padding:3px 8px;" onclick="renameStaff('${safeN}')">改名</button>
+        <button class="danger" style="font-size:12px;padding:3px 8px;" onclick="removeStaff('${safeN}')">移除</button>
       </td>
     </tr>
-  `).join("");
-  document.getElementById("staff-list-table").innerHTML = `<table><tr><th class="left">姓名</th><th>操作</th></tr>${rows}</table>`;
+  `;
+  }).join("");
+  document.getElementById("staff-list-table").innerHTML = `<table><tr><th class="left">姓名</th><th>部門</th><th>操作</th></tr>${rows}</table>`;
 }
 
 function resolveLoginName(){
@@ -1011,6 +1095,7 @@ function togglePasswordVisibility(inputId, btnEl){
 }
 
 function enterApp(){
+  seedIndoorStaffOnce();
   document.getElementById("login-overlay").classList.add("hidden");
   document.getElementById("whoami-name").textContent = currentUser + (previewMode ? "（預覽中）" : "");
   document.getElementById("ex-name-display").textContent = currentUser;
@@ -1023,6 +1108,7 @@ function enterApp(){
   renderExPositionOptions();
   renderSfPositionOptions();
   renderExStaffButtons();
+  renderElectionPositionOptions();
   renderAdminPanel();
   renderQuarterOverridePanel();
   renderOverview();
@@ -1176,6 +1262,27 @@ function setStaffType(name, type){
   renderOverview();
 }
 
+/* ========== 外場／內場部門（每位夥伴只屬於一邊，決定他看得到哪些崗位、可以參與哪一邊的選舉） ========== */
+function loadStaffDept(){
+  try{ return JSON.parse(localStorage.getItem(STAFF_DEPT_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveStaffDept(d){ localStorage.setItem(STAFF_DEPT_KEY, JSON.stringify(d)); }
+// 沒有明確設定過部門的人一律當作「外場」（相容舊資料：這個功能上線前的所有夥伴都是外場）。
+function staffDept(name){ return loadStaffDept()[name] || "外場"; }
+function setStaffDept(name, dept){
+  if(!isAdmin()) return;
+  const d = loadStaffDept();
+  d[name] = dept;
+  saveStaffDept(d);
+  renderStaffListPanel();
+  renderPersonnelPanel();
+  renderLearnedPanel();
+  renderVoteExemptPanel();
+  renderElectionPositionOptions();
+  renderOverview();
+}
+
 function loadHours(){
   try{ return JSON.parse(localStorage.getItem(HOURS_KEY)) || {}; }
   catch(e){ return {}; }
@@ -1215,11 +1322,11 @@ function setLearned(staff, position, checked){
   renderLearnedPanel();
   renderExStaffButtons();
 }
-// 全選/全不選：一次把某個崗位這一整欄，套用到所有夥伴身上。
+// 全選/全不選：一次把某個崗位這一整欄，套用到「同部門」的所有夥伴身上（不會動到另一部門的人）。
 function toggleLearnedColumn(position, checked){
   if(!isAdmin()) return;
   const l = loadLearned();
-  STAFF.forEach(name=>{
+  STAFF.filter(name => staffDept(name) === positionDept(position)).forEach(name=>{
     if(!l[name]) l[name] = {};
     l[name][position] = checked;
   });
@@ -1232,15 +1339,18 @@ function renderLearnedPanel(){
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
   const header = `<th class="left">姓名</th>` + POSITIONS.map(p=>{
-    const allChecked = STAFF.length > 0 && STAFF.every(name=>isLearned(name, p));
+    const sameDept = STAFF.filter(name => staffDept(name) === positionDept(p));
+    const allChecked = sameDept.length > 0 && sameDept.every(name=>isLearned(name, p));
     return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allChecked ? "checked" : ""} onchange="toggleLearnedColumn('${p}', this.checked)"> 全選</label></th>`;
   }).join("");
   const rows = STAFF.map(name=>{
+    const dept = staffDept(name);
     const cells = POSITIONS.map(p=>{
+      if(positionDept(p) !== dept) return `<td class="status">—</td>`; // 不同部門的崗位不適用，不顯示勾選框避免誤勾
       const checked = isLearned(name, p);
       return `<td><input type="checkbox" ${checked ? "checked" : ""} onchange="setLearned('${name}','${p}', this.checked)"></td>`;
     }).join("");
-    return `<tr><td class="left">${name}</td>${cells}</tr>`;
+    return `<tr><td class="left">${name}（${dept}）</td>${cells}</tr>`;
   }).join("");
   document.getElementById("learned-table").innerHTML = `<table><tr>${header}</tr>${rows}</table>`;
 }
@@ -1265,11 +1375,11 @@ function setVoteExempt(staff, position, checked){
   renderVoteExemptPanel();
   renderVoteGate();
 }
-// 全選/全不選：一次把某個崗位這一整欄的「不用投票」，套用到所有夥伴身上。
+// 全選/全不選：一次把某個崗位這一整欄的「不用投票」，套用到「同部門」的所有夥伴身上。
 function toggleVoteExemptColumn(position, checked){
   if(!isAdmin()) return;
   const v = loadVoteExempt();
-  STAFF.forEach(name=>{
+  STAFF.filter(name => staffDept(name) === positionDept(position)).forEach(name=>{
     if(!v[name]) v[name] = {};
     v[name][position] = checked;
   });
@@ -1285,15 +1395,18 @@ function renderVoteExemptPanel(){
   if(!isAdmin()){ card.style.display = "none"; return; }
   card.style.display = "block";
   const header = `<th class="left">姓名</th>` + POSITIONS.map(p=>{
-    const allRequired = STAFF.length > 0 && STAFF.every(name=>!isVoteExempt(name, p));
+    const sameDept = STAFF.filter(name => staffDept(name) === positionDept(p));
+    const allRequired = sameDept.length > 0 && sameDept.every(name=>!isVoteExempt(name, p));
     return `<th>${p}<br><label style="font-weight:400;font-size:11px;white-space:nowrap;"><input type="checkbox" ${allRequired ? "checked" : ""} onchange="toggleVoteExemptColumn('${p}', !this.checked)"> 全選</label></th>`;
   }).join("");
   const rows = STAFF.map(name=>{
+    const dept = staffDept(name);
     const cells = POSITIONS.map(p=>{
+      if(positionDept(p) !== dept) return `<td class="status">—</td>`;
       const required = !isVoteExempt(name, p);
       return `<td><input type="checkbox" ${required ? "checked" : ""} onchange="setVoteExempt('${name}','${p}', !this.checked)"></td>`;
     }).join("");
-    return `<tr><td class="left">${name}</td>${cells}</tr>`;
+    return `<tr><td class="left">${name}（${dept}）</td>${cells}</tr>`;
   }).join("");
   document.getElementById("vote-exempt-table").innerHTML = `<table><tr>${header}</tr>${rows}</table>`;
 }
@@ -1485,6 +1598,7 @@ function exportSettingsJSON(){
     staffList: STAFF,
     learned: loadLearned(),
     staffTypes: loadStaffTypes(),
+    staffDept: loadStaffDept(),
     hours: loadHours(),
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
@@ -1526,10 +1640,12 @@ function importSettingsFile(){
       if(obj.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(obj.scorePublish));
       if(obj.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(obj.publishedResults));
       if(obj.publishedScoreResults) localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(obj.publishedScoreResults));
+      if(obj.staffDept) localStorage.setItem(STAFF_DEPT_KEY, JSON.stringify(obj.staffDept));
       showMsg("settings-sync-msg","ok","已同步管理員最新的系統設定。");
       renderExPositionOptions();
       renderSfPositionOptions();
       renderExStaffButtons();
+      renderElectionPositionOptions();
       renderVoteGate();
       applyBoundQuarter();
       checkExaminerEligibility();
@@ -1570,9 +1686,11 @@ function applyCloudSettings(data){
   if(data.scorePublish) localStorage.setItem(SCORE_PUBLISH_KEY, JSON.stringify(data.scorePublish));
   if(data.publishedResults) localStorage.setItem(PUBLISHED_RESULTS_KEY, JSON.stringify(data.publishedResults));
   if(data.publishedScoreResults) localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(data.publishedScoreResults));
+  if(data.staffDept) localStorage.setItem(STAFF_DEPT_KEY, JSON.stringify(data.staffDept));
   renderExPositionOptions();
   renderSfPositionOptions();
   renderExStaffButtons();
+  renderElectionPositionOptions();
   renderVoteGate();
   applyBoundQuarter();
   checkExaminerEligibility();
@@ -1727,6 +1845,7 @@ async function pushSettingsToCloud(){
     staffList: STAFF,
     learned: loadLearned(),
     staffTypes: loadStaffTypes(),
+    staffDept: loadStaffDept(),
     hours: loadHours(),
     voteExempt: loadVoteExempt(),
     periodQuarterOverride: loadPeriodQuarterOverride(),
@@ -2090,11 +2209,10 @@ function initCommon(){
   document.getElementById("sf-position").addEventListener("change", ()=>{ checkSelfEligibility(); loadExistingSelfScoreIntoForm(); });
   document.getElementById("sf-period").addEventListener("change", ()=>{ checkSelfEligibility(); renderExistingSelf(); loadExistingSelfScoreIntoForm(); });
 
-  fillSelect(document.getElementById("el-position"), POSITIONS);
-  fillVoteCandidateSelects();
+  renderElectionPositionOptions();
   applyBoundQuarter();
   document.getElementById("el-quarter").addEventListener("change", ()=>{ renderVoteResults(); renderQuarterSummary(); });
-  document.getElementById("el-position").addEventListener("change", ()=>{ applyBoundQuarter(); renderVoteResults(); });
+  document.getElementById("el-position").addEventListener("change", ()=>{ applyBoundQuarter(); fillVoteCandidateSelects(); renderVoteResults(); });
 
   document.getElementById("ov-deadline-period").addEventListener("change", loadDeadlineInputsForPeriod);
   document.getElementById("ov-reopen-period").addEventListener("change", renderReopenPanel);
@@ -2111,7 +2229,7 @@ function selectExStaff(name){
 function renderExStaffButtons(){
   const position = document.getElementById("ex-position").value;
   const container = document.getElementById("ex-staff-buttons");
-  const candidates = STAFF.filter(name => name !== currentUser && isLearned(name, position));
+  const candidates = STAFF.filter(name => name !== currentUser && staffDept(name) === positionDept(position) && isLearned(name, position));
 
   if(!candidates.includes(exStaffValue)) exStaffValue = "";
 
@@ -2165,7 +2283,8 @@ function clearBlockMsg(id){
 // 個人自評的崗位下拉，只開放這個人自己被標記「已學會」的崗位；管理員例外，永遠看得到全部崗位方便管理/測試。
 function visibleSelfPositions(){
   if(isAdmin() || !currentUser) return POSITIONS.slice();
-  return POSITIONS.filter(position => isLearned(currentUser, position));
+  const dept = staffDept(currentUser);
+  return POSITIONS.filter(position => positionDept(position) === dept && isLearned(currentUser, position));
 }
 function renderSfPositionOptions(){
   const select = document.getElementById("sf-position");
@@ -2187,12 +2306,31 @@ function renderSfPositionOptions(){
 
 function visibleExaminerPositions(period){
   if(isAdmin() || !currentUser) return POSITIONS.slice();
+  const dept = staffDept(currentUser);
   return POSITIONS.filter(position=>{
+    if(positionDept(position) !== dept) return false;
     const quarter = quarterForExamining(period, position);
     if(!quarter || !isPublished(quarter)) return true;
     const winners = winnersFor(quarter, position);
     return winners.length === 0 || winners.includes(currentUser);
   });
+}
+
+// 考官選舉的崗位下拉：一般夥伴只看得到自己部門（外場／內場）的崗位，管理員永遠看得到全部，
+// 確保「內外場選舉完全分開」——外場夥伴不會在投票畫面看到內場崗位，反之亦然。
+function visibleElectionPositions(){
+  if(isAdmin() || !currentUser) return POSITIONS.slice();
+  const dept = staffDept(currentUser);
+  return POSITIONS.filter(position => positionDept(position) === dept);
+}
+function renderElectionPositionOptions(){
+  const select = document.getElementById("el-position");
+  if(!select) return;
+  const prevValue = select.value;
+  const positions = visibleElectionPositions();
+  fillSelect(select, positions);
+  select.value = positions.includes(prevValue) ? prevValue : (positions[0] || "");
+  fillVoteCandidateSelects();
 }
 // 依目前的考核期間，重新計算「崗位」下拉選單看得到哪些選項；
 // 如果一般夥伴完全沒有崗位可選（全部已公布且都沒當選），整張表單換成一則提示文字。
@@ -2268,6 +2406,7 @@ function saveExaminer(){
   if(!canSubmit(period, "examiner", currentUser)){ showMsg("ex-msg","warn","本月考官評分已截止，無法再送出，如需協助請洽管理員。"); return; }
   if(!staff){ showMsg("ex-msg","warn","請先選擇被考核人"); return; }
   if(staff === currentUser){ showMsg("ex-msg","warn","不能評分自己"); return; }
+  if(staffDept(staff) !== staffDept(currentUser)){ showMsg("ex-msg","warn","不能跨部門評分（外場／內場的考官評分完全分開）"); return; }
 
   const quarter = quarterForExamining(period, position);
   if(!quarter || !isPublished(quarter)){
@@ -2531,11 +2670,17 @@ function loadElectionQuarterBind(){
   catch(e){ return {}; }
 }
 function saveElectionQuarterBind(m){ localStorage.setItem(ELECTION_QUARTER_BIND_KEY, JSON.stringify(m)); }
-// 有綁定就用綁定的名稱，沒有綁定就照原本的日曆規則自動判斷（例如7-9月自動對應2026-Q3）。
+// 內場的選舉季度預設值要跟外場的分開，不然同一個日曆季度（例如都是2026-Q3）會共用同一個「公布」開關，
+// NN公布外場結果時會連內場（可能都還沒投完票）一起公布出去；沒有特別綁定的內場崗位，
+// 季度名稱自動加上「-內場」字尾跟外場區分，外場完全不受影響、字尾對NN跟內場夥伴都看得懂。
+function deptQuarterSuffix(position){
+  return positionDept(position) === "內場" ? "-內場" : "";
+}
+// 有綁定就用綁定的名稱，沒有綁定就照原本的日曆規則自動判斷（例如7-9月自動對應2026-Q3），內場再加上部門字尾。
 function effectiveVoteQuarter(position){
   const bind = loadElectionQuarterBind();
   const v = bind[position];
-  return (v && v.trim()) ? v.trim() : currentQuarter();
+  return (v && v.trim()) ? v.trim() : (currentQuarter() + deptQuarterSuffix(position));
 }
 // 每次切換崗位、或登入時，把「選舉季度」欄位自動帶成這個崗位目前該用的值；
 // 欄位本身還是可以手動修改（例如管理員想開一次全新的季中選舉、或想回頭查看某個舊季度的結果），
@@ -2579,7 +2724,7 @@ function renderQuarterBindPanel(){
   if(bind[position]){
     statusEl.textContent = `「${position}」目前綁定季度：${bind[position]}（大家的裝置會自動套用這個名稱，不用自己填）`;
   } else {
-    statusEl.textContent = `「${position}」目前沒有綁定，大家會自動依日曆季度判斷（目前：${currentQuarter()}）`;
+    statusEl.textContent = `「${position}」目前沒有綁定，大家會自動依日曆季度判斷（目前：${currentQuarter() + deptQuarterSuffix(position)}）`;
   }
 }
 
@@ -2662,7 +2807,7 @@ function quarterForExamining(period, position){
   const bind = loadElectionQuarterBind();
   const v = bind[position];
   if(v && v.trim()) return v.trim();
-  return effectiveQuarter(period);
+  return effectiveQuarter(period) + deptQuarterSuffix(position);
 }
 function setQuarterOverride(period, quarter){
   if(!isAdmin() || !period) return;
@@ -2820,10 +2965,17 @@ function togglePublish(){
 }
 
 /* ========== 考官選舉：表單 ========== */
+// 候選人只列出跟目前選定崗位同一個部門的夥伴（外場崗位只能選外場人、內場崗位只能選內場人），
+// 內外場選舉完全分開，不會出現跨部門候選人。
 function fillVoteCandidateSelects(){
+  const positionEl = document.getElementById("el-position");
+  const position = positionEl ? positionEl.value : "";
+  const dept = position ? positionDept(position) : null;
+  const candidates = dept ? STAFF.filter(s => staffDept(s) === dept) : STAFF;
   ["vote-first","vote-second","vote-third"].forEach(id=>{
     const el = document.getElementById(id);
-    el.innerHTML = `<option value="">（不選）</option>` + STAFF.map(s=>`<option value="${s}">${s}</option>`).join("");
+    if(!el) return;
+    el.innerHTML = `<option value="">（不選）</option>` + candidates.map(s=>`<option value="${s}">${s}</option>`).join("");
   });
 }
 
@@ -2841,6 +2993,7 @@ function saveVote(){
   // 第一/第二/第三名都可以留空（例如不熟這個崗位、不想勉強排名），但已經選的人裡面不能重複選同一個人。
   const picks = [first, second, third].filter(Boolean);
   if(new Set(picks).size !== picks.length){ showMsg("el-msg","warn","同一個人不能重複選為第一 / 第二 / 第三名"); return; }
+  if(picks.some(p => staffDept(p) !== positionDept(position))){ showMsg("el-msg","warn","候選人必須跟這個崗位同部門（外場／內場選舉完全分開）"); return; }
   if(!reason){ showMsg("el-msg","warn","請填寫你判斷的依據（必填），公布考官時會一併讓大家看見"); return; }
 
   const votes = loadVotes();
@@ -2974,7 +3127,9 @@ function renderQuarterSummary(){
   // 一律優先改用結果快照，只有快照也沒有時才退回本機票數當最後備援。
   const votes = loadVotes();
   const snap = loadPublishedResults();
-  const rows = POSITIONS.map(p=>{
+  // 一般夥伴只看得到自己部門的崗位總表；管理員看得到全部（外場＋內場）。
+  const positionsToShow = isAdmin() ? POSITIONS.slice() : visibleElectionPositions();
+  const rows = positionsToShow.map(p=>{
     const record = votes[voteRecordKey(quarter, p)];
     const N = winnerCount(p);
     let ranked = null, voterCount = 0, reasonsHtml = "";
@@ -3315,6 +3470,7 @@ function computeBonusTotals(period){
     }).filter(Boolean);
     return {
       staff: name,
+      dept: staffDept(name),
       partTime: isPartTime(name),
       detail: parts.length ? parts.join("、") : "—",
       total,
@@ -3330,15 +3486,16 @@ function renderBonusTotalsTable(period){
   const rows = totals.map(t=>`
     <tr>
       <td class="left">${t.staff}${t.partTime ? ' <span class="status">(兼職)</span>' : ""}</td>
+      <td>${t.dept}</td>
       <td class="left" style="font-size:12px;">${t.detail}</td>
       <td><b>NT$ ${t.total}</b>${t.incomplete ? ' <span class="status">⚠️部分崗位待確認工時，未計入</span>' : ""}</td>
     </tr>
   `).join("");
   el.innerHTML = `
     <table>
-      <tr><th class="left">姓名</th><th class="left">崗位加給明細</th><th>加給總額</th></tr>
+      <tr><th class="left">姓名</th><th>部門</th><th class="left">崗位加給明細</th><th>加給總額</th></tr>
       ${rows}
-      <tr><td class="left"><b>全部加總</b></td><td></td><td><b>NT$ ${grandTotal}</b></td></tr>
+      <tr><td class="left"><b>全部加總</b></td><td></td><td></td><td><b>NT$ ${grandTotal}</b></td></tr>
     </table>
     <p class="helptext">標示「⚠️待確認工時」的人，是兼職夥伴這個月工時資料還沒填，該崗位加給金額算不出來，暫不計入總額與全部加總，請到「人事設定」補上工時後再重新查看，避免少算。</p>
   `;
@@ -3347,10 +3504,11 @@ function exportBonusTotalsCSV(){
   if(!isAdmin()){ alert("僅管理員可以匯出"); return; }
   const period = document.getElementById("ov-period").value;
   const totals = computeBonusTotals(period);
-  const rows = [["姓名","雇用型態","崗位加給明細","加給總額(NT$)","備註"]];
+  const rows = [["姓名","部門","雇用型態","崗位加給明細","加給總額(NT$)","備註"]];
   totals.forEach(t=>{
     rows.push([
       t.staff,
+      t.dept,
       t.partTime ? "兼職" : "正職",
       t.detail,
       t.total,
@@ -3616,22 +3774,29 @@ function renderOverview(){
 }
 
 /* ========== 加給對照表 ========== */
+// 一般夥伴只看得到自己部門（外場／內場）的加給對照；管理員看得到兩邊，並用小標題分開兩組。
 function renderBonusTable(){
-  const rows = POSITIONS.map(p=>{
-    const b = BONUS[p];
-    return `<tr><td class="left">${p}</td>
-      <td><span class="grade grade-S">S</span></td><td>NT$ ${b.S}</td>
-      <td><span class="grade grade-A">A</span></td><td>NT$ ${b.A}</td>
-      <td><span class="grade grade-B">B</span></td><td>NT$ ${b.B}</td>
-      <td><span class="grade grade-C">C</span></td><td>NT$ ${b.C}</td>
-      </tr>`;
+  const deptsToShow = isAdmin() ? ["外場","內場"] : [staffDept(currentUser) || "外場"];
+  const sectionHtml = deptsToShow.map(dept=>{
+    const positions = (dept === "外場" ? OUTDOOR_POSITIONS : INDOOR_POSITIONS);
+    const rows = positions.map(p=>{
+      const b = BONUS[p];
+      return `<tr><td class="left">${p}</td>
+        <td><span class="grade grade-S">S</span></td><td>NT$ ${b.S}</td>
+        <td><span class="grade grade-A">A</span></td><td>NT$ ${b.A}</td>
+        <td><span class="grade grade-B">B</span></td><td>NT$ ${b.B}</td>
+        <td><span class="grade grade-C">C</span></td><td>NT$ ${b.C}</td>
+        </tr>`;
+    }).join("");
+    return `
+      <h3 style="font-size:14px;margin:14px 0 6px;">${dept}</h3>
+      <table>
+        <tr><th class="left">崗位</th><th colspan="2">S 級</th><th colspan="2">A 級</th><th colspan="2">B 級</th><th colspan="2">C 級</th></tr>
+        ${rows}
+      </table>
+    `;
   }).join("");
-  document.getElementById("bonus-table").innerHTML = `
-    <table>
-      <tr><th class="left">崗位</th><th colspan="2">S 級</th><th colspan="2">A 級</th><th colspan="2">B 級</th><th colspan="2">C 級</th></tr>
-      ${rows}
-    </table>
-  `;
+  document.getElementById("bonus-table").innerHTML = sectionHtml;
 }
 
 /* ========== 評分標準完整說明 ========== */
