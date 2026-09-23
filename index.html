@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>今鶴安平｜外場崗位評分系統</title>
+<title>今鶴安平｜崗位評分系統</title>
 <style>
   :root{
     --bg:#faf7f0; --card:#ffffff; --ink:#2b2621; --muted:#8a7f70;
@@ -136,7 +136,7 @@
 <!-- ================= 登入畫面 ================= -->
 <div id="login-overlay">
   <div class="login-card">
-    <h2>今鶴安平・外場崗位評分系統</h2>
+    <h2>今鶴安平・崗位評分系統</h2>
     <div class="sub">請手動輸入你的姓名並輸入密碼，夥伴的預設密碼是 <b>0800</b>，登入後可自行修改密碼（純數字四位數）。登入需要連線核對密碼，請確保有網路連線；第一次用這台裝置的話，請先展開下方「新裝置」設定同步網址。</div>
     <div class="field">
       <label>姓名</label>
@@ -164,8 +164,8 @@
 
 <header>
   <div>
-    <h1>今鶴安平・外場崗位評分系統</h1>
-    <p>服務・吧台・菜口・二樓・機動・櫃檯・接待・開早・收班　｜　考官評分 × 個人自評　→　崗位評級與加給</p>
+    <h1>今鶴安平・崗位評分系統</h1>
+    <p>外場・內場　｜　考官評分 × 個人自評　→　崗位評級與加給</p>
   </div>
   <div class="whoami">
     目前登入：<b id="whoami-name">—</b>
@@ -518,8 +518,8 @@
   <!-- ================= 加給對照及評分標準（合併） ================= -->
   <div class="tab" id="tab-reference">
     <div class="card">
-      <h2>外場崗位加給對照表</h2>
-      <p class="helptext">依據「加給金額對照」表，正職外場與內外精通外場加給金額相同。單位：新台幣元 / 月；兼職依當月工時比例發放，詳見「評分總覽」分頁的人事設定。</p>
+      <h2>崗位加給對照表</h2>
+      <p class="helptext">單位：新台幣元 / 月，正職領全額；兼職依當月工時比例發放，詳見「評分總覽」分頁的人事設定。</p>
       <div id="bonus-table"></div>
     </div>
     <div class="card">
@@ -625,7 +625,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-35";
+const APP_VERSION = "2026-08-01-36";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -1612,7 +1612,7 @@ function exportSettingsJSON(){
     appVersion: APP_VERSION,
     ts: Date.now()
   };
-  download(`今鶴安平外場系統設定_${currentMonth()}.json`, JSON.stringify(payload, null, 2));
+  download(`今鶴安平系統設定_${currentMonth()}.json`, JSON.stringify(payload, null, 2));
 }
 
 function importSettingsFile(){
@@ -3199,7 +3199,7 @@ function applyVoteImported(votes, obj){
 function exportAllVotesJSON(){
   const quarter = document.getElementById("el-quarter").value.trim();
   const votes = loadVotes();
-  download(`今鶴安平外場考官投票總表_${quarter || currentQuarter()}.json`, JSON.stringify(votes, null, 2));
+  download(`今鶴安平考官投票總表_${quarter || currentQuarter()}.json`, JSON.stringify(votes, null, 2));
 }
 
 function clearQuarterVotes(){
@@ -3310,7 +3310,7 @@ function applyImported(data, obj){
 function exportAllJSON(){
   if(!isAdmin()){ alert("僅管理員可以匯出總表"); return; }
   const data = loadData();
-  download(`今鶴安平外場評分總表_${currentMonth()}.json`, JSON.stringify(data, null, 2));
+  download(`今鶴安平評分總表_${currentMonth()}.json`, JSON.stringify(data, null, 2));
 }
 
 function exportCSV(){
@@ -3360,7 +3360,7 @@ function exportCSV(){
   const blob = new Blob(["﻿"+csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `今鶴安平外場評分結果_${period}.csv`;
+  a.href = url; a.download = `今鶴安平評分結果_${period}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
@@ -3521,7 +3521,7 @@ function exportBonusTotalsCSV(){
   const blob = new Blob(["﻿"+csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `今鶴安平外場崗位加給總額_${period}.csv`;
+  a.href = url; a.download = `今鶴安平崗位加給總額_${period}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
