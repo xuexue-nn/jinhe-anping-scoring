@@ -585,6 +585,12 @@
       <div class="msg" id="el-msg"></div>
     </div>
 
+    <div class="card">
+      <h2>我已經投過的票</h2>
+      <p class="helptext">列出你目前送出過的每一筆投票，方便確認自己這一票有沒有確實送出成功；送出後表單會清空是正常的，紀錄都會留在這裡。</p>
+      <div id="el-existing"></div>
+    </div>
+
     <div class="card" id="el-quarterbind-card" style="display:none;">
       <h2>選舉季度綁定（僅管理員可見）</h2>
       <p class="helptext">預設會自動用目前的日曆季度（例如7-9月自動對應2026-Q3），大家的「選舉季度」欄位會自動帶出正確值，不用自己填。如果這個崗位這次要用特別名稱辦選舉（例如季中重新選舉），把上面「選舉季度」改成你要的名稱，再按「綁定」，大家的裝置就會自動套用這個名稱，不用自己填、也不會打錯字投錯地方。綁定只在「這一個日曆季度」有效，等真正的日曆季度換下一季，就會自動失效、改用新季度的預設值，不用妳自己記得去清除。</p>
@@ -651,7 +657,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-44";
+const APP_VERSION = "2026-08-01-45";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -1163,6 +1169,7 @@ function enterApp(){
   applyBoundQuarter();
   renderVoteResults();
   renderQuarterSummary();
+  renderExistingVotes();
   checkSelfEligibility();
   renderExistingSelf();
   // 開機時「崗位加給對照表」是在還沒登入、不知道是誰之前就先畫過一次（預設只顯示外場），
@@ -3384,6 +3391,7 @@ function saveVote(){
   resetVoteFields();
   renderVoteResults();
   renderQuarterSummary();
+  renderExistingVotes(); // 送出後表單會被resetVoteFields()清空，這裡讓下面的「我已經投過的票」立刻更新，讓夥伴看得到剛送出的這一筆
   pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason});
 }
 
@@ -3395,6 +3403,52 @@ function resetVoteFields(){
   });
   const reasonEl = document.getElementById("vote-reason");
   if(reasonEl) reasonEl.value = "";
+}
+
+// 「我已經投過的票」：表單送出後會被resetVoteFields()清空，夥伴常常會擔心「剛剛是不是真的送出去了」，
+// 這裡列出這個人目前在系統裡（不分崗位、不分季度）所有已經留有紀錄的投票，讓他自己確認得到，
+// 跟「個人自評」那邊「我目前已經填過的自評」的做法一樣。
+function renderExistingVotes(){
+  const el = document.getElementById("el-existing");
+  if(!el) return;
+  if(!currentUser){
+    el.innerHTML = `<p class="helptext">請先登入。</p>`;
+    return;
+  }
+  const votes = loadVotes();
+  const rows = Object.values(votes)
+    .map(record=>{
+      const ballot = record.ballots && record.ballots[currentUser];
+      if(!ballot) return null;
+      return {quarter: record.quarter, position: record.position, ballot};
+    })
+    .filter(Boolean)
+    .sort((a,b)=> (b.ballot.ts||0) - (a.ballot.ts||0));
+
+  if(rows.length === 0){
+    el.innerHTML = `<p class="helptext">你目前還沒有送出任何投票。</p>`;
+    return;
+  }
+
+  const trs = rows.map(r=>{
+    const picks = [r.ballot.first, r.ballot.second, r.ballot.third].filter(Boolean);
+    const pickText = picks.length ? picks.map((name,i)=>`${i+1}. ${name}`).join("　") : "（沒有勾選排名）";
+    const stamp = r.ballot.ts ? new Date(r.ballot.ts).toLocaleString("zh-TW") : "";
+    return `<tr>
+      <td class="left">${r.position}</td>
+      <td class="left">${r.quarter}</td>
+      <td class="left">${pickText}</td>
+      <td class="left" style="font-size:12px;">${escapeHtml(r.ballot.reason || "")}</td>
+      <td style="font-size:12px;white-space:nowrap;">${stamp}</td>
+    </tr>`;
+  }).join("");
+
+  el.innerHTML = `
+    <table>
+      <tr><th class="left">崗位</th><th class="left">季度</th><th class="left">你的排名</th><th class="left">判斷依據</th><th>送出時間</th></tr>
+      ${trs}
+    </table>
+  `;
 }
 
 function renderVoteResults(){
@@ -4243,7 +4297,7 @@ document.getElementById("tabnav").addEventListener("click", (e)=>{
   document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
   document.getElementById("tab-"+btn.dataset.tab).classList.add("active");
   if(btn.dataset.tab === "overview"){ populatePeriodOptions(); renderOverview(); }
-  if(btn.dataset.tab === "election"){ renderVoteResults(); renderQuarterSummary(); }
+  if(btn.dataset.tab === "election"){ renderVoteResults(); renderQuarterSummary(); renderExistingVotes(); }
 });
 document.getElementById("ov-period").addEventListener("change", renderOverview);
 document.getElementById("ov-staff-filter").addEventListener("change", renderOverview);
