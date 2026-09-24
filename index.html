@@ -657,7 +657,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-45";
+const APP_VERSION = "2026-08-01-46";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -2117,6 +2117,13 @@ function renderPersonnelPanel(){
     `<p class="helptext">基準時數＝這個月正職滿班的工時，可依每月天數不同自行調整；兼職加給 = 崗位加給金額 × (實際時數 ÷ 基準時數)，最高以100%為限，工時未填則暫不計算金額。</p>`;
 }
 
+// 這個月如果已經公布過，夥伴那邊看到的是「快照」不是即時資料，
+// 所以NN事後修改調整評級/調整總分/建議備註時，要順便重新整理一次快照，
+// 不然夥伴那邊會一直看到修改前的舊內容（或看不到剛加上的建議），
+// 要等到NN之後剛好按「公布/取消公布」或「同步到雲端」才會更新，很容易被忽略。
+function maybeRefreshScoreSnapshotForPeriod(period){
+  if(isScorePublished(period)) refreshPublishedScoreResultsSnapshot();
+}
 function updateOverrideGrade(period, position, staff, value){
   const data = loadData();
   const record = data[recordKey(period, position, staff)];
@@ -2125,6 +2132,7 @@ function updateOverrideGrade(period, position, staff, value){
   record.override.grade = value || null;
   record.override.ts = Date.now();
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
   renderOverview();
 }
 function updateOverrideScore(period, position, staff, value){
@@ -2136,6 +2144,7 @@ function updateOverrideScore(period, position, staff, value){
   record.override.score = (num == null || isNaN(num)) ? null : num;
   record.override.ts = Date.now();
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
   renderOverview();
 }
 // 夥伴看得到的「考官建議」：一律匿名（不帶考官姓名），由NN彙整/修飾/刪改後存這裡，
@@ -2185,6 +2194,7 @@ function adminSaveEditExaminer(period, position, staff, examinerName){
   if(!record || !record.examiners || !record.examiners[examinerName]){ editingExaminer = null; renderOverview(); return; }
   record.examiners[examinerName] = {...scores, note, ts: Date.now()};
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
   pushSubmissionToCloud({type:"examiner", period, position, staff, examinerName, note, ...scores});
   editingExaminer = null;
   renderOverview();
@@ -2217,6 +2227,7 @@ function adminSaveEditSelf(period, position, staff){
   if(!record){ editingSelf = null; renderOverview(); return; }
   record.self = {...scores, note, ts: Date.now()};
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
   pushSubmissionToCloud({type:"self", period, position, staff, note, ...scores});
   editingSelf = null;
   renderOverview();
@@ -2229,6 +2240,7 @@ function updateOverrideNote(period, position, staff, value){
   record.override.note = value || "";
   record.override.ts = Date.now();
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
 }
 // 把這筆紀錄目前所有考官的原始建議（匿名、去掉姓名）串起來，方便NN一鍵帶入再自行編輯
 function collectRawNotes(record){
@@ -2246,6 +2258,7 @@ function fillOverrideNoteFromRaw(period, position, staff){
   record.override.note = merged;
   record.override.ts = Date.now();
   saveData(data);
+  maybeRefreshScoreSnapshotForPeriod(period);
   renderOverview();
 }
 
