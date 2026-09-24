@@ -651,12 +651,12 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-42";
+const APP_VERSION = "2026-08-01-43";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
 const OUTDOOR_POSITIONS = ["服務","吧台","菜口","二樓","機動","櫃檯","接待","開早","收班"];
-const INDOOR_POSITIONS = ["主爐","副爐","切肉","烤炸","甜點","擺盤","備料","內場開早","內場收班"];
+const INDOOR_POSITIONS = ["主爐","副爐","切肉","烤炸","甜點","擺控","備料","內場開早","內場收班"];
 const POSITIONS = OUTDOOR_POSITIONS.concat(INDOOR_POSITIONS);
 const POSITION_DEPT = {};
 OUTDOOR_POSITIONS.forEach(p=>{ POSITION_DEPT[p] = "外場"; });
@@ -726,7 +726,7 @@ const BONUS = {
   "切肉": {S:300, A:200, B:100, C:0},
   "烤炸": {S:450, A:300, B:100, C:0},
   "甜點": {S:500, A:325, B:100, C:0},
-  "擺盤": {S:400, A:250, B:100, C:0},
+  "擺控": {S:400, A:250, B:100, C:0},
   "備料": {S:450, A:300, B:100, C:0},
   "內場開早": {S:300, A:200, B:100, C:0},
   "內場收班": {S:300, A:200, B:100, C:0}
@@ -1142,6 +1142,7 @@ function togglePasswordVisibility(inputId, btnEl){
 }
 
 function enterApp(){
+  migratePositionRenames(); // 崗位改名的資料搬遷：登入時也重跑一次，確保沒被雲端舊資料蓋掉
   seedIndoorStaffOnce();
   document.getElementById("login-overlay").classList.add("hidden");
   document.getElementById("whoami-name").textContent = currentUser + (previewMode ? "（預覽中）" : "");
@@ -1789,13 +1790,18 @@ async function pullSettingsFromCloud(silent){
     // 內場名單自癒檢查：如果剛才這份雲端資料是同步之前的舊資料（還沒有內場名單），
     // 這裡會立刻把缺少的內場夥伴補回來，避免開機時「先補上、又被雲端蓋掉」的時序問題；
     // 一旦NN成功「同步到雲端」過一次，seedIndoorStaffOnce() 就不會再動手，不影響之後手動的異動。
-    if(isAdmin() && seedIndoorStaffOnce()){
+    // 崗位改名搬遷也是同樣道理：剛拉回來的雲端設定如果還是改名前的舊資料，這裡會立刻重新搬一次，
+    // 避免「已經改名的資料被雲端舊資料蓋回舊名字」。
+    const renamedAfterPull = migratePositionRenames();
+    if((isAdmin() && seedIndoorStaffOnce()) || renamedAfterPull){
       renderStaffListPanel();
       renderLearnedPanel();
       renderVoteExemptPanel();
       renderExStaffButtons();
       renderElectionPositionOptions();
       renderOverview();
+      renderVoteResults();
+      renderQuarterSummary();
     }
     checkVersionMismatch(json.data && json.data.appVersion);
     const stamp = new Date().toLocaleString("zh-TW");
@@ -3148,6 +3154,128 @@ function loadPublishedScoreResults(){
 }
 function savePublishedScoreResults(obj){ localStorage.setItem(PUBLISHED_SCORE_RESULTS_KEY, JSON.stringify(obj)); }
 
+/* ========== 崗位改名的資料搬遷 ==========
+   哪天要幫某個崗位改名字（例如「擺盤」改成「擺控」），只要在這裡的 POSITION_RENAME_MAP 加一行
+   舊名字→新名字，這個裝置重新整理時就會自動把所有跟這個崗位有關、已經存在的資料
+   （這個月的評分、投票/當選結果、已學會崗位勾選、投票資格設定、季度綁定、沿用設定、
+   已公布的投票與評分結果快照）都搬到新名字底下，不會遺失任何進度。
+   這個搬遷本身是「找不到舊名字底下的資料就完全不做事」，可以放心每次開機、每次跟雲端同步完
+   都重新跑一次，不會重複搬壞資料，也能避免被雲端還沒更新的舊資料蓋回「擺盤」。
+   任何裝置（不只管理員）都會自動跑，確保每個人自己手機/電腦上留存的舊資料也能正確顯示。 */
+const POSITION_RENAME_MAP = { "擺盤": "擺控" };
+function migratePositionRenames(){
+  const entries = Object.entries(POSITION_RENAME_MAP);
+  if(!entries.length) return false;
+  let touchedSettings = false;
+
+  entries.forEach(([oldName, newName])=>{
+    // 1) 評分資料（考官評分／自評）：key = period|position|staff
+    const data = loadData();
+    let dataChanged = false;
+    Object.keys(data).forEach(key=>{
+      const record = data[key];
+      if(record && record.position === oldName){
+        const newKey = recordKey(record.period, newName, record.staff);
+        record.position = newName;
+        data[newKey] = record;
+        delete data[key];
+        dataChanged = true;
+      }
+    });
+    if(dataChanged) saveData(data);
+
+    // 2) 投票資料：key = quarter|position
+    const votes = loadVotes();
+    let votesChanged = false;
+    Object.keys(votes).forEach(key=>{
+      const record = votes[key];
+      if(record && record.position === oldName){
+        const newKey = voteRecordKey(record.quarter, newName);
+        record.position = newName;
+        votes[newKey] = record;
+        delete votes[key];
+        votesChanged = true;
+      }
+    });
+    if(votesChanged) saveVotes(votes);
+
+    // 3) 已學會崗位：{staff: {position: bool}}
+    const learned = loadLearned();
+    let learnedChanged = false;
+    Object.keys(learned).forEach(staff=>{
+      const m = learned[staff];
+      if(m && Object.prototype.hasOwnProperty.call(m, oldName)){
+        m[newName] = m[oldName];
+        delete m[oldName];
+        learnedChanged = true;
+      }
+    });
+    if(learnedChanged){ saveLearned(learned); touchedSettings = true; }
+
+    // 4) 投票資格（不用投票名單）：{staff: {position: bool}}
+    const voteExempt = loadVoteExempt();
+    let voteExemptChanged = false;
+    Object.keys(voteExempt).forEach(staff=>{
+      const m = voteExempt[staff];
+      if(m && Object.prototype.hasOwnProperty.call(m, oldName)){
+        m[newName] = m[oldName];
+        delete m[oldName];
+        voteExemptChanged = true;
+      }
+    });
+    if(voteExemptChanged){ saveVoteExempt(voteExempt); touchedSettings = true; }
+
+    // 5) 選舉季度綁定：{position: {calendarQuarter,label}}
+    const bind = loadElectionQuarterBind();
+    if(Object.prototype.hasOwnProperty.call(bind, oldName)){
+      bind[newName] = bind[oldName];
+      delete bind[oldName];
+      saveElectionQuarterBind(bind);
+      touchedSettings = true;
+    }
+
+    // 6) 沿用設定：{position: 來源季度字串}
+    const carryOver = loadCarryOver();
+    if(Object.prototype.hasOwnProperty.call(carryOver, oldName)){
+      carryOver[newName] = carryOver[oldName];
+      delete carryOver[oldName];
+      saveCarryOver(carryOver);
+      touchedSettings = true;
+    }
+
+    // 7) 已公布投票結果快照：{quarter: {position: {...}}}
+    const pubResults = loadPublishedResults();
+    let pubResultsChanged = false;
+    Object.keys(pubResults).forEach(quarter=>{
+      const posMap = pubResults[quarter];
+      if(posMap && Object.prototype.hasOwnProperty.call(posMap, oldName)){
+        posMap[newName] = posMap[oldName];
+        delete posMap[oldName];
+        pubResultsChanged = true;
+      }
+    });
+    if(pubResultsChanged){ savePublishedResults(pubResults); touchedSettings = true; }
+
+    // 8) 已公布評分結果快照：{period: {staff: [{position,...}, ...]}}
+    const pubScores = loadPublishedScoreResults();
+    let pubScoresChanged = false;
+    Object.keys(pubScores).forEach(period=>{
+      const byStaff = pubScores[period] || {};
+      Object.keys(byStaff).forEach(staff=>{
+        (byStaff[staff] || []).forEach(entry=>{
+          if(entry && entry.position === oldName){
+            entry.position = newName;
+            pubScoresChanged = true;
+          }
+        });
+      });
+    });
+    if(pubScoresChanged){ savePublishedScoreResults(pubScores); touchedSettings = true; }
+  });
+
+  return touchedSettings;
+}
+
 // 用這台裝置目前本機的評分資料，整理出「這個月」每位夥伴的結果（只收錄已經產生評級的那幾筆）。
 function buildScoreResultSnapshotForPeriod(period){
   const data = loadData();
@@ -4118,6 +4246,7 @@ document.getElementById("ov-period").addEventListener("change", renderOverview);
 document.getElementById("ov-staff-filter").addEventListener("change", renderOverview);
 
 /* ========== 初始化 ========== */
+migratePositionRenames(); // 崗位改名（例如擺盤→擺控）的資料搬遷，開機第一時間先跑一次
 ensureDefaultPins();
 initCommon();
 renderExStaffButtons();
