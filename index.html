@@ -651,7 +651,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-43";
+const APP_VERSION = "2026-08-01-44";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -3053,8 +3053,11 @@ function effectiveQuarter(period){
 // 這樣「選舉季度綁定」（給投票用）跟「本月考官選舉期別」（給評分用）兩個機制才會算出一致的結果，不會兜不起來。
 function quarterForExamining(period, position){
   const bind = loadElectionQuarterBind();
-  const v = bind[position];
-  if(v && v.trim()) return v.trim();
+  const entry = bind[position];
+  const calNow = currentQuarter();
+  if(entry && entry.calendarQuarter === calNow && entry.label && entry.label.trim()){
+    return entry.label.trim();
+  }
   return effectiveQuarter(period) + deptQuarterSuffix(position);
 }
 function setQuarterOverride(period, quarter){
