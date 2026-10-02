@@ -657,7 +657,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-46";
+const APP_VERSION = "2026-08-01-47";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -1881,13 +1881,47 @@ async function pullPinsFromCloud(){
 // 考官評分／個人自評／投票，按「儲存」或「送出投票」成功後會呼叫這裡，
 // 如果NN已經設定好同步網址，就在背景把「自己剛剛這一筆」上傳雲端；
 // 不需要密碼、不會彈窗打擾、離線或上傳失敗也完全不影響本機已經存好的資料。
+// 回傳 true/false 表示這次有沒有真的同步成功，讓呼叫的地方可以記錄下來、顯示給本人看，
+// 不要讓「本機存好了」跟「雲端也收到了」被夥伴誤以為是同一件事
+// （之前就是這樣：本機一定存得到、畫面看起來都正常，但雲端沒收到時完全沒有任何提醒，
+// 要等NN事後去「從雲端收集」才會發現少了誰的資料）。
 async function pushSubmissionToCloud(payload){
-  if(previewMode) return; // 預覽模式完全不連網送出，不會留下任何雲端紀錄
+  if(previewMode) return false; // 預覽模式完全不連網送出，不會留下任何雲端紀錄
   const url = loadSyncUrl();
-  if(!url) return;
+  if(!url) return false; // 這台裝置根本沒設定同步網址，存檔只會留在本機，雲端完全收不到
   try{
-    await fetch(url, {method:"POST", body: JSON.stringify(payload)});
-  }catch(err){ /* 靜默失敗：本機資料已經存好，之後有網路或NN收集時仍會補上 */ }
+    const res = await fetch(url, {method:"POST", body: JSON.stringify(payload)});
+    if(!res.ok) return false;
+    const json = await res.json();
+    return !!(json && json.ok);
+  }catch(err){
+    return false; // 連線失敗：本機資料已經存好，不會遺失，但這一筆目前還沒同步到雲端
+  }
+}
+
+// 把上面那次上傳雲端的成功/失敗結果，寫回這筆本機紀錄的 synced 欄位，
+// 讓「已經送出的評分/自評/投票」清單可以直接顯示「已同步雲端」或「尚未同步成功，請重試」，
+// 本人跟NN都不用等到事後收集才發現少了資料。
+function recordExaminerSyncStatus(period, position, staff, examinerName, success){
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  if(!record || !record.examiners || !record.examiners[examinerName]) return;
+  record.examiners[examinerName].synced = success;
+  saveData(data);
+}
+function recordSelfSyncStatus(period, position, staff, success){
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  if(!record || !record.self) return;
+  record.self.synced = success;
+  saveData(data);
+}
+function recordVoteSyncStatus(quarter, position, voter, success){
+  const votes = loadVotes();
+  const record = votes[voteRecordKey(quarter, position)];
+  if(!record || !record.ballots || !record.ballots[voter]) return;
+  record.ballots[voter].synced = success;
+  saveVotes(votes);
 }
 
 // 僅NN可用：把目前這台裝置上的人事設定／崗位資格設定，寫回雲端試算表。
@@ -2552,7 +2586,15 @@ function saveExaminer(){
   const w = weighted(scores).toFixed(2);
   showMsg("ex-msg","ok",`已儲存：${currentUser} 對「${staff}／${position}」的評分，加權分數 ${w} 分，可以繼續選下一位夥伴。`);
   renderExistingExaminer();
-  pushSubmissionToCloud({type:"examiner", period, position, staff, examinerName: currentUser, note, ...scores});
+  pushSubmissionToCloud({type:"examiner", period, position, staff, examinerName: currentUser, note, ...scores})
+    .then(success=>{
+      if(previewMode) return; // 預覽模式本來就不連網，不用顯示「同步失敗」把NN搞糊塗
+      recordExaminerSyncStatus(period, position, staff, currentUser, success);
+      renderExistingExaminer();
+      if(!success){
+        showMsg("ex-msg","warn",`⚠️「${staff}／${position}」這筆評分已經存在這台裝置，但剛剛無法連上雲端同步，管理員那邊目前還收不到。請檢查網路連線，或到下面「已經送出的評分」清單按「重新同步」。`);
+      }
+    });
 
   // 存檔成功後自動清空分數與備註、取消已選的被考核人，準備填下一位夥伴，避免忘記改分數而重複送出。
   resetExaminerFields();
@@ -2636,16 +2678,67 @@ function renderExistingExaminer(){
       <td>${r.e.collab}</td><td>${r.e.efficiency}</td><td>${r.e.quality}</td>
       <td><b>${r.w.toFixed(2)}</b></td>
       <td class="left" style="font-size:12px;">${r.e.note ? nl2br(r.e.note) : '<span class="status">（無填寫）</span>'}</td>
+      <td style="font-size:12px;white-space:nowrap;">${syncStatusBadge(r.e.synced, `retrySyncExaminer('${period}','${position}','${r.name}')`)}</td>
     </tr>
   `).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">夥伴</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>你給的加權分數</th><th class="left">你寫的備註</th></tr>
+      <tr><th class="left">夥伴</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>你給的加權分數</th><th class="left">你寫的備註</th><th>同步狀態</th></tr>
       ${trs}
     </table>
-    <p class="helptext">依你給的加權分數由高到低排列，方便比較不同夥伴之間的評級是否一致；看不到其他考官給的分數。</p>
+    <p class="helptext">依你給的加權分數由高到低排列，方便比較不同夥伴之間的評級是否一致；看不到其他考官給的分數。「同步狀態」顯示這筆有沒有真的送到雲端，管理員那邊才收得到——如果顯示「尚未同步」，請檢查網路連線後按「重新同步」。</p>
   `;
+}
+
+// 考官評分／自評／投票送出後，背景同步雲端的結果（成功／失敗／舊資料沒有記錄）轉成一個小標籤，
+// 同步失敗時附上「重新同步」按鈕；r.synced 是 undefined 代表是這次功能上線前就存在的舊紀錄，
+// 當時沒有記錄同步結果，不代表失敗，所以不顯示警告，單純不顯示標籤。
+function syncStatusBadge(synced, retryCall){
+  if(synced === true) return `<span class="status" style="color:#2f7d4f;">✅ 已同步雲端</span>`;
+  if(synced === false) return `<span class="status" style="color:#b23b3b;">⚠️ 尚未同步</span> <button type="button" class="ghost" style="font-size:11px;padding:2px 6px;" onclick="${retryCall}">重新同步</button>`;
+  return `<span class="status">—</span>`;
+}
+
+// 「重新同步」按鈕：直接拿本機已經存好的那一筆，再送一次到雲端，不用重填。
+function retrySyncExaminer(period, position, staff){
+  const data = loadData();
+  const record = data[recordKey(period, position, staff)];
+  const e = record && record.examiners && record.examiners[currentUser];
+  if(!e){ showMsg("ex-msg","warn","找不到這筆本機資料，可能已經被刪除。"); return; }
+  showMsg("ex-msg","ok","重新同步中…");
+  pushSubmissionToCloud({type:"examiner", period, position, staff, examinerName: currentUser, note: e.note || "", collab: e.collab, efficiency: e.efficiency, quality: e.quality})
+    .then(success=>{
+      recordExaminerSyncStatus(period, position, staff, currentUser, success);
+      renderExistingExaminer();
+      showMsg("ex-msg", success ? "ok" : "warn", success ? "已重新同步成功。" : "仍然無法連上雲端，請確認網路連線後再試一次。");
+    });
+}
+function retrySyncSelf(period, position){
+  const data = loadData();
+  const record = data[recordKey(period, position, currentUser)];
+  const s = record && record.self;
+  if(!s){ showMsg("sf-msg","warn","找不到這筆本機資料，可能已經被刪除。"); return; }
+  showMsg("sf-msg","ok","重新同步中…");
+  pushSubmissionToCloud({type:"self", period, position, staff: currentUser, note: s.note || "", collab: s.collab, efficiency: s.efficiency, quality: s.quality})
+    .then(success=>{
+      recordSelfSyncStatus(period, position, currentUser, success);
+      renderExistingSelf();
+      showMsg("sf-msg", success ? "ok" : "warn", success ? "已重新同步成功。" : "仍然無法連上雲端，請確認網路連線後再試一次。");
+    });
+}
+function retrySyncVote(quarter, position){
+  const votes = loadVotes();
+  const record = votes[voteRecordKey(quarter, position)];
+  const ballot = record && record.ballots && record.ballots[currentUser];
+  if(!ballot){ showMsg("el-msg","warn","找不到這筆本機資料，可能已經被刪除。"); return; }
+  showMsg("el-msg","ok","重新同步中…");
+  pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: ballot.first, second: ballot.second, third: ballot.third, reason: ballot.reason || ""})
+    .then(success=>{
+      recordVoteSyncStatus(quarter, position, currentUser, success);
+      renderExistingVotes();
+      showMsg("el-msg", success ? "ok" : "warn", success ? "已重新同步成功。" : "仍然無法連上雲端，請確認網路連線後再試一次。");
+    });
 }
 
 /* ========== 個人自評 ========== */
@@ -2665,7 +2758,15 @@ function saveSelf(){
 
   const w = weighted(scores).toFixed(2);
   showMsg("sf-msg","ok",`已儲存 ${currentUser} 在「${position}」的自評，加權分數 ${w} 分，可以繼續填下一個崗位（下面「已經送出的自評」清單可以確認這筆有存到）。`);
-  pushSubmissionToCloud({type:"self", period, position, staff: currentUser, note, ...scores});
+  pushSubmissionToCloud({type:"self", period, position, staff: currentUser, note, ...scores})
+    .then(success=>{
+      if(previewMode) return; // 預覽模式本來就不連網，不用顯示「同步失敗」把NN搞糊塗
+      recordSelfSyncStatus(period, position, currentUser, success);
+      renderExistingSelf();
+      if(!success){
+        showMsg("sf-msg","warn",`⚠️「${position}」這筆自評已經存在這台裝置，但剛剛無法連上雲端同步，管理員那邊目前還收不到。請檢查網路連線，或到下面「已經送出的自評」清單按「重新同步」。`);
+      }
+    });
 
   // 存檔成功後自動清空分數與備註，方便接著填下一個崗位的自評，不用手動刪掉這次留下的文字；
   // 畫面上的分數重設不代表沒存到，下面會另外列出真正已經存進系統的紀錄，讓夥伴能確認自己填寫成功。
@@ -2707,15 +2808,16 @@ function renderExistingSelf(){
       <td><b>${r.w.toFixed(2)}</b></td>
       <td class="left" style="font-size:12px;">${r.s.note ? nl2br(r.s.note) : '<span class="status">（無填寫）</span>'}</td>
       <td class="status">${r.s.ts ? new Date(r.s.ts).toLocaleString("zh-TW") : "—"}</td>
+      <td style="font-size:12px;white-space:nowrap;">${syncStatusBadge(r.s.synced, `retrySyncSelf('${period}','${r.position}')`)}</td>
     </tr>
   `).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">崗位</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>加權分數</th><th class="left">備註</th><th>儲存時間</th></tr>
+      <tr><th class="left">崗位</th><th>協作溝通</th><th>工作效能</th><th>成果品質</th><th>加權分數</th><th class="left">備註</th><th>儲存時間</th><th>同步狀態</th></tr>
       ${trs}
     </table>
-    <p class="helptext">同一個崗位重複儲存會覆蓋成最新的一次，這裡只會顯示最後一次存的內容。</p>
+    <p class="helptext">同一個崗位重複儲存會覆蓋成最新的一次，這裡只會顯示最後一次存的內容。「同步狀態」顯示這筆有沒有真的送到雲端，管理員那邊才收得到——如果顯示「尚未同步」，請檢查網路連線後按「重新同步」。</p>
   `;
 }
 
@@ -3405,7 +3507,15 @@ function saveVote(){
   renderVoteResults();
   renderQuarterSummary();
   renderExistingVotes(); // 送出後表單會被resetVoteFields()清空，這裡讓下面的「我已經投過的票」立刻更新，讓夥伴看得到剛送出的這一筆
-  pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason});
+  pushSubmissionToCloud({type:"vote", quarter, position, voter: currentUser, first: first || null, second: second || null, third: third || null, reason})
+    .then(success=>{
+      if(previewMode) return; // 預覽模式本來就不連網，不用顯示「同步失敗」把NN搞糊塗
+      recordVoteSyncStatus(quarter, position, currentUser, success);
+      renderExistingVotes();
+      if(!success){
+        showMsg("el-msg","warn",`⚠️ 這票（「${position}」／${quarter}）已經存在這台裝置，但剛剛無法連上雲端同步，管理員那邊目前還收不到。請檢查網路連線，或到下面「我已經投過的票」清單按「重新同步」。`);
+      }
+    });
 }
 
 // 送出投票後，把排名跟判斷依據清空，方便接著投下一個崗位，不用手動刪掉上一次留下的文字。
@@ -3453,12 +3563,13 @@ function renderExistingVotes(){
       <td class="left">${pickText}</td>
       <td class="left" style="font-size:12px;">${escapeHtml(r.ballot.reason || "")}</td>
       <td style="font-size:12px;white-space:nowrap;">${stamp}</td>
+      <td style="font-size:12px;white-space:nowrap;">${syncStatusBadge(r.ballot.synced, `retrySyncVote('${r.quarter}','${r.position}')`)}</td>
     </tr>`;
   }).join("");
 
   el.innerHTML = `
     <table>
-      <tr><th class="left">崗位</th><th class="left">季度</th><th class="left">你的排名</th><th class="left">判斷依據</th><th>送出時間</th></tr>
+      <tr><th class="left">崗位</th><th class="left">季度</th><th class="left">你的排名</th><th class="left">判斷依據</th><th>送出時間</th><th>同步狀態</th></tr>
       ${trs}
     </table>
   `;
