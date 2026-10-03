@@ -283,7 +283,9 @@
 
     <div class="card">
       <h2>我在這個崗位已經評過的夥伴</h2>
-      <p class="helptext">連備註一起列出來，方便確認自己這筆有沒有確實送出成功；這裡看得到的備註就是你自己剛剛寫的那份。</p>
+      <p class="helptext">連備註一起列出來，方便確認自己這筆有沒有確實送出成功；這裡看得到的備註就是你自己剛剛寫的那份。如果管理員最近通知系統修過雲端同步的問題，請按下面「全部重新同步」補送一次，確保這台裝置上所有的評分都真的到雲端了。</p>
+      <button type="button" class="ghost" style="font-size:12px;margin-bottom:8px;" onclick="resyncAllExaminer()">全部重新同步我的考官評分</button>
+      <p class="helptext" id="ex-resync-status"></p>
       <div id="ex-existing"></div>
     </div>
 
@@ -355,7 +357,9 @@
 
     <div class="card">
       <h2>我這個月已經送出的自評</h2>
-      <p class="helptext">儲存後畫面上的分數會重設成預設值方便繼續填下一個崗位，不代表沒存到；這裡會列出你目前已經確實存進系統的紀錄，可以用來確認自己填寫成功。</p>
+      <p class="helptext">儲存後畫面上的分數會重設成預設值方便繼續填下一個崗位，不代表沒存到；這裡會列出你目前已經確實存進系統的紀錄，可以用來確認自己填寫成功。如果管理員最近通知系統修過雲端同步的問題，請按下面「全部重新同步」補送一次，確保這台裝置上所有的自評都真的到雲端了。</p>
+      <button type="button" class="ghost" style="font-size:12px;margin-bottom:8px;" onclick="resyncAllSelf()">全部重新同步我的自評</button>
+      <p class="helptext" id="sf-resync-status"></p>
       <div id="sf-existing"></div>
     </div>
   </div>
@@ -587,7 +591,9 @@
 
     <div class="card">
       <h2>我已經投過的票</h2>
-      <p class="helptext">列出你目前送出過的每一筆投票，方便確認自己這一票有沒有確實送出成功；送出後表單會清空是正常的，紀錄都會留在這裡。</p>
+      <p class="helptext">列出你目前送出過的每一筆投票，方便確認自己這一票有沒有確實送出成功；送出後表單會清空是正常的，紀錄都會留在這裡。如果管理員最近通知系統修過雲端同步的問題，請按下面「全部重新同步」補送一次，確保這台裝置上所有的投票都真的到雲端了。</p>
+      <button type="button" class="ghost" style="font-size:12px;margin-bottom:8px;" onclick="resyncAllVotes()">全部重新同步我的投票</button>
+      <p class="helptext" id="el-resync-status"></p>
       <div id="el-existing"></div>
     </div>
 
@@ -657,7 +663,7 @@
 // 系統版本號：每次改版就換一個新字串（給NN看得懂就好，例如日期）。
 // NN按「同步到雲端」時會把這個版本號一起送上去；其他裝置開啟系統時會拿自己這個版本號跟雲端最新的比對，
 // 不一樣就會跳出頂部橫幅提醒對方重新整理頁面，避免有人一直用到舊版本。
-const APP_VERSION = "2026-08-01-47";
+const APP_VERSION = "2026-08-01-48";
 // 外場／內場是分開運作的兩組崗位（各自選舉、各自評分、互不影響），只是整合進同一個系統方便NN管理。
 // 「開早」「收班」內外場都有，為了避免選舉/評分資料在系統內部用同一個崗位名稱互相撞在一起，
 // 內場的開早/收班在系統內部用「內場開早」「內場收班」這種帶部門字樣的名稱區分（畫面上顯示的也是這個名稱）。
@@ -2739,6 +2745,73 @@ function retrySyncVote(quarter, position){
       renderExistingVotes();
       showMsg("el-msg", success ? "ok" : "warn", success ? "已重新同步成功。" : "仍然無法連上雲端，請確認網路連線後再試一次。");
     });
+}
+
+// 「全部重新同步」：補救雲端同步修好之前，這台裝置上「畫面顯示已同步，但雲端其實沒收到」的舊資料。
+// 直接把這台裝置本機現有的每一筆（考官評分／自評／投票）重新送一次，伺服器端是合併邏輯，
+// 重複送同一筆不會造成任何問題（內容一樣就等於沒變），所以可以放心每次有需要就整批重送一次。
+async function resyncAllExaminer(){
+  if(!currentUser){ showMsg("ex-msg","warn","請先登入"); return; }
+  if(previewMode){ showMsg("ex-msg","warn","預覽模式不會真的連網，無法重新同步。"); return; }
+  const statusEl = document.getElementById("ex-resync-status");
+  if(statusEl) statusEl.textContent = "重新同步中…";
+  const data = loadData();
+  const targets = Object.values(data).filter(r=> r.examiners && r.examiners[currentUser]);
+  let okCount = 0, failCount = 0;
+  for(const record of targets){
+    const e = record.examiners[currentUser];
+    const success = await pushSubmissionToCloud({type:"examiner", period: record.period, position: record.position, staff: record.staff, examinerName: currentUser, note: e.note || "", collab: e.collab, efficiency: e.efficiency, quality: e.quality});
+    recordExaminerSyncStatus(record.period, record.position, record.staff, currentUser, success);
+    success ? okCount++ : failCount++;
+  }
+  renderExistingExaminer();
+  if(statusEl){
+    statusEl.textContent = targets.length === 0
+      ? "這台裝置目前沒有你填過的考官評分，不用同步。"
+      : `重新同步完成：成功 ${okCount} 筆${failCount>0 ? `，失敗 ${failCount} 筆（請檢查網路連線後再按一次）` : "。"}`;
+  }
+}
+async function resyncAllSelf(){
+  if(!currentUser){ showMsg("sf-msg","warn","請先登入"); return; }
+  if(previewMode){ showMsg("sf-msg","warn","預覽模式不會真的連網，無法重新同步。"); return; }
+  const statusEl = document.getElementById("sf-resync-status");
+  if(statusEl) statusEl.textContent = "重新同步中…";
+  const data = loadData();
+  const targets = Object.values(data).filter(r=> r.self && r.staff === currentUser);
+  let okCount = 0, failCount = 0;
+  for(const record of targets){
+    const s = record.self;
+    const success = await pushSubmissionToCloud({type:"self", period: record.period, position: record.position, staff: currentUser, note: s.note || "", collab: s.collab, efficiency: s.efficiency, quality: s.quality});
+    recordSelfSyncStatus(record.period, record.position, currentUser, success);
+    success ? okCount++ : failCount++;
+  }
+  renderExistingSelf();
+  if(statusEl){
+    statusEl.textContent = targets.length === 0
+      ? "這台裝置目前沒有你填過的自評，不用同步。"
+      : `重新同步完成：成功 ${okCount} 筆${failCount>0 ? `，失敗 ${failCount} 筆（請檢查網路連線後再按一次）` : "。"}`;
+  }
+}
+async function resyncAllVotes(){
+  if(!currentUser){ showMsg("el-msg","warn","請先登入"); return; }
+  if(previewMode){ showMsg("el-msg","warn","預覽模式不會真的連網，無法重新同步。"); return; }
+  const statusEl = document.getElementById("el-resync-status");
+  if(statusEl) statusEl.textContent = "重新同步中…";
+  const votes = loadVotes();
+  const targets = Object.values(votes).filter(r=> r.ballots && r.ballots[currentUser]);
+  let okCount = 0, failCount = 0;
+  for(const record of targets){
+    const b = record.ballots[currentUser];
+    const success = await pushSubmissionToCloud({type:"vote", quarter: record.quarter, position: record.position, voter: currentUser, first: b.first, second: b.second, third: b.third, reason: b.reason || ""});
+    recordVoteSyncStatus(record.quarter, record.position, currentUser, success);
+    success ? okCount++ : failCount++;
+  }
+  renderExistingVotes();
+  if(statusEl){
+    statusEl.textContent = targets.length === 0
+      ? "這台裝置目前沒有你投過的票，不用同步。"
+      : `重新同步完成：成功 ${okCount} 筆${failCount>0 ? `，失敗 ${failCount} 筆（請檢查網路連線後再按一次）` : "。"}`;
+  }
 }
 
 /* ========== 個人自評 ========== */
